@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover + the safe-area insets in the CSS keep the HUD clear of
+     the notch and the home indicator when this runs as a full-screen web app. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05060f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Huff&amp;Puff</title>
+<!-- Inlined so the page makes zero requests it doesn't need — a missing
+     favicon.ico is otherwise the one guaranteed 404 in an offline-first app. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305060f'/%3E%3Cpath d='M12 5v9l7-4v12l-7-4v9' stroke='%233fffb4' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===========================================================================
+     LAYERS, back to front:
+       #video        the camera feed (dimmed, kept visible so the player can see
+                     where they are standing — this is genuinely useful feedback)
+       #debugCanvas  skeleton overlay, only when debug is on
+       #gameRoot     the Phaser canvas
+       #hud          score / gap / pace / shields
+       .screen       full-screen overlays (start, calibration, over, error)
+     ======================================================================== -->
+
+<div id="stage">
+  <video id="video" playsinline webkit-playsinline muted autoplay></video>
+  <canvas id="debugCanvas" class="hidden"></canvas>
+  <div id="gameRoot"></div>
+
+  <!-- ---------------------------------------------------------------- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-row hud-top">
+      <div class="hud-block">
+        <div class="hud-label">Distance</div>
+        <div class="hud-value"><span id="hudDistance">0</span><span class="unit">m</span></div>
+      </div>
+      <div class="hud-block hud-shields">
+        <div class="hud-label">Shields</div>
+        <div class="hud-value" id="hudShields">◆◆◆</div>
+      </div>
+      <div class="hud-block hud-right">
+        <div class="hud-label">Speed</div>
+        <div class="hud-value" id="hudSpeed">0.0</div>
+      </div>
+    </div>
+
+    <!-- Void proximity. Deliberately the biggest, highest-contrast element on
+         screen: it is the only thing you must read while out of breath. -->
+    <div class="gap-wrap">
+      <div class="gap-label"><span id="gapText">SAFE</span></div>
+      <div class="gap-bar"><div class="gap-fill" id="gapFill"></div></div>
+    </div>
+
+    <!-- Pace meter. The marker sits at your calibrated comfortable pace, so
+         "keep the bar at the line" is the whole instruction. -->
+    <div class="pace-wrap">
+      <div class="pace-bar">
+        <div class="pace-fill" id="paceFill"></div>
+        <div class="pace-target" id="paceTarget" title="your comfortable pace"></div>
+      </div>
+      <div class="pace-meta">
+        <span id="paceText">—</span>
+        <span id="cadenceText" class="dim">0 spm</span>
+      </div>
+    </div>
+
+    <!-- Big transient messages: HIT, JUMP, 400m, TRACKING LOST … -->
+    <div id="toast" class="toast"></div>
+
+    <div id="trackingWarn" class="tracking-warn hidden">
+      Step back into frame
+    </div>
+
+    <div class="hud-controls">
+      <button id="btnDebug" class="mini-btn" type="button" aria-label="Toggle debug overlay">DEBUG</button>
+      <button id="btnMute" class="mini-btn" type="button" aria-label="Toggle sound">SOUND</button>
+      <button id="btnQuit" class="mini-btn" type="button" aria-label="End run">END</button>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- START -->
+  <section class="screen" id="screenStart">
+    <div class="panel">
+      <h1 class="logo">Huff<span>&amp;</span>Puff</h1>
+      <p class="tagline">Run in place. Outrun the void.</p>
+
+      <ul class="how">
+        <li><b>Run in place</b> — your real pace is your speed</li>
+        <li><b>Lean</b> left / right — change lane</li>
+        <li><b>Jump</b> — clear the low hurdles</li>
+        <li><b>Crouch</b> — duck the high beams</li>
+      </ul>
+
+      <p class="setup-note">
+        Prop your phone at about knee height, roughly 6–10 feet away, so your
+        <b>whole body</b> is in frame. Bright, even light works best.
+      </p>
+
+      <button id="btnStart" class="primary-btn" type="button">START</button>
+      <p class="perm-note">
+        Camera access is required. Everything runs on-device — no video ever
+        leaves your phone.
+      </p>
+      <p class="sim-note hidden" id="simNote">
+        SIM MODE — keyboard: <kbd>↑</kbd>/<kbd>↓</kbd> pace, <kbd>←</kbd><kbd>→</kbd>
+        lane, <kbd>Space</kbd> jump, <kbd>Shift</kbd> duck
+      </p>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- CALIBRATION -->
+  <section class="screen hidden" id="screenCalib">
+    <div class="panel calib-panel">
+      <div class="calib-step">Step <span id="calibIndex">1</span> of 5</div>
+      <h2 id="calibTitle">Get your whole body in frame</h2>
+      <p class="calib-instruction" id="calibInstruction"></p>
+      <p class="calib-sub" id="calibSub"></p>
+
+      <div class="progress"><div class="progress-fill" id="calibProgress"></div></div>
+      <div class="calib-progress-label" id="calibProgressLabel"></div>
+
+      <p class="calib-hint" id="calibHint"></p>
+
+      <div class="calib-live">
+        <span id="calibCadence" class="dim"></span>
+      </div>
+
+      <div class="calib-actions">
+        <button id="btnCalibSkip" class="ghost-btn hidden" type="button">Skip</button>
+        <button id="btnCalibCancel" class="ghost-btn" type="button">Cancel</button>
+      </div>
+    </div>
+
+    <div class="countdown hidden" id="countdown">3</div>
+  </section>
+
+  <!-- --------------------------------------------------------- GAME OVER -->
+  <section class="screen hidden" id="screenOver">
+    <div class="panel">
+      <h2 class="over-title" id="overTitle">The void got you</h2>
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-num" id="overDistance">0</div><div class="stat-label">metres</div></div>
+        <div class="stat"><div class="stat-num" id="overTime">0:00</div><div class="stat-label">time</div></div>
+        <div class="stat"><div class="stat-num" id="overDodged">0</div><div class="stat-label">dodged</div></div>
+        <div class="stat"><div class="stat-num" id="overHits">0</div><div class="stat-label">hits</div></div>
+      </div>
+      <p class="over-note" id="overNote"></p>
+      <button id="btnAgain" class="primary-btn" type="button">RUN AGAIN</button>
+      <button id="btnRecalibrate" class="ghost-btn" type="button">Recalibrate first</button>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------- ERROR -->
+  <section class="screen hidden" id="screenError">
+    <div class="panel">
+      <h2 class="err-title">Can't start</h2>
+      <p class="err-body" id="errBody"></p>
+      <div class="err-help" id="errHelp"></div>
+      <button id="btnRetry" class="primary-btn" type="button">TRY AGAIN</button>
+    </div>
+  </section>
+
+  <!-- ----------------------------------------------------- DEBUG READOUT -->
+  <div id="debugPanel" class="debug-panel hidden"><pre id="debugText"></pre></div>
+
+  <!-- Loading veil, shown while TF.js + MoveNet come up. -->
+  <div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Starting camera…</div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     SCRIPTS — all vendored locally so the game works with no CDN and, with the
+     optional local model, no network at all. Order matters: TF core, then the
+     backends that register themselves against it, then the model wrapper.
+     ======================================================================== -->
+<script src="vendor/tf-core.min.js"></script>
+<script src="vendor/tf-converter.min.js"></script>
+<script src="vendor/tf-backend-webgl.min.js"></script>
+<script src="vendor/tf-backend-cpu.min.js"></script>
+<script src="vendor/pose-detection.min.js"></script>
+<script src="vendor/phaser.min.js"></script>
+
+<script src="js/config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/one-euro-filter.js"></script>
+<script src="js/pose-tracker.js"></script>
+<script src="js/calibration.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/game.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

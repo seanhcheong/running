@@ -1,0 +1,10 @@
+# Scratch npm tree used only to extract vendor/*.min.js — see tools/vendor.sh.
+# Never commit this: it is ~330MB and fully reproducible.
+.vendor-build/
+
+# Optional locally-downloaded MoveNet weights (see README "Running fully offline")
+vendor/models/
+
+node_modules/
+.DS_Store
+*.log

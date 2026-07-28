@@ -1,0 +1,634 @@
+/* =============================================================================
+ * Huff&Puff — UI
+ * =============================================================================
+ * Design constraints that drive everything here:
+ *   - The player is 6-10 feet away and out of breath. Nothing that matters may
+ *     be small, thin, or low-contrast. Type is huge, numbers are tabular.
+ *   - The player is MOVING, so nothing may reflow or jump about.
+ *   - It has to survive a phone notch, a home indicator, and both orientations,
+ *     which is what the safe-area insets and vmin-based sizes are for.
+ *
+ * Layer order (z-index):  video 0 · skeleton 1 · game 2 · HUD 3 · screens 5
+ * ========================================================================== */
+
+:root {
+  --bg: #05060f;
+  --ink: #eaf2ff;
+  --dim: #8c9bb5;
+  --accent: #3fffb4;
+  --accent-2: #39d9ff;
+  --warn: #ffc23d;
+  --danger: #ff2b57;
+  --violet: #b478ff;
+  --panel: rgba(8, 11, 24, 0.86);
+  --panel-line: rgba(120, 160, 220, 0.18);
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --num: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+
+  /* Notch / home-indicator safe padding, used by every fixed edge element. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  /* A fitness game gets grabbed, swiped and double-tapped by accident. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.hidden { display: none !important; }
+.dim { color: var(--dim); }
+
+/* ---------------------------------------------------------------------------
+ * CAMERA + SKELETON
+ * ---------------------------------------------------------------------------
+ * Two placements, switched by a class on <body>:
+ *   .cam-full  calibration — the player needs to see their whole body
+ *   .cam-pip   playing     — a corner mirror, enough to notice you've drifted
+ *                            out of frame without stealing the screen
+ * #video and #debugCanvas must occupy exactly the same rect: drawDebug()
+ * replicates `object-fit: cover` from the canvas's own client size.
+ * ------------------------------------------------------------------------ */
+#video, #debugCanvas {
+  position: absolute;
+  /* The raw front camera is not mirrored; the player expects a mirror. */
+  transform: scaleX(-1);
+  transform-origin: center;
+  transition: all 260ms ease;
+}
+
+#video {
+  object-fit: cover;
+  background: #000;
+  z-index: 0;
+}
+
+#debugCanvas { z-index: 1; pointer-events: none; }
+
+body.cam-full #video, body.cam-full #debugCanvas {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  opacity: 1;
+  box-shadow: none;
+}
+
+body.cam-pip #video, body.cam-pip #debugCanvas {
+  inset: auto;
+  top: calc(var(--safe-t) + 8px);
+  right: calc(var(--safe-r) + 8px);
+  width: min(23vmin, 132px);
+  height: min(30vmin, 172px);
+  border-radius: 12px;
+  overflow: hidden;
+  opacity: 0.62;
+  z-index: 4;
+  box-shadow: 0 0 0 1px var(--panel-line), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Off entirely before the camera exists, and on the end screens. */
+body.cam-off #video, body.cam-off #debugCanvas { opacity: 0; }
+
+#gameRoot {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+#gameRoot canvas { display: block; }
+
+/* ---------------------------------------------------------------------------
+ * HUD
+ * ------------------------------------------------------------------------ */
+#hud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px)
+           calc(var(--safe-b) + 10px) calc(var(--safe-l) + 12px);
+  display: flex;
+  flex-direction: column;
+}
+
+.hud-row { display: flex; align-items: flex-start; gap: 12px; }
+.hud-top { justify-content: space-between; }
+/* Keep the top row clear of the camera PIP (which is min(23vmin,132px) wide,
+   inset 8px) with a little breathing room rather than a hairline miss. */
+body.cam-pip .hud-top { padding-right: min(27vmin, 154px); }
+
+.hud-block { min-width: 0; }
+.hud-block.hud-right { text-align: right; }
+.hud-shields { text-align: center; }
+
+.hud-label {
+  font-size: clamp(9px, 1.6vmin, 12px);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 700;
+}
+
+.hud-value {
+  font-family: var(--num);
+  font-size: clamp(20px, 4.6vmin, 38px);
+  font-weight: 700;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+.hud-value .unit { font-size: 0.5em; color: var(--dim); margin-left: 2px; }
+
+#hudShields { color: var(--accent); letter-spacing: 0.08em; }
+#hudShields.empty { color: var(--danger); }
+
+/* --- void proximity ------------------------------------------------------ */
+.gap-wrap { margin-top: 10px; }
+
+.gap-label {
+  font-size: clamp(11px, 2vmin, 15px);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 7px;
+}
+
+.gap-bar {
+  height: clamp(10px, 1.8vmin, 16px);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.gap-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  /* Short transition only: it must feel like live telemetry, not an animation. */
+  transition: width 90ms linear, background 200ms linear;
+}
+
+/* State classes are set from main.js so colour and copy always agree. */
+.gap-wrap.warn .gap-fill { background: linear-gradient(90deg, var(--warn), #ff8a3d); }
+.gap-wrap.warn .gap-label { color: var(--warn); }
+.gap-wrap.danger .gap-fill { background: linear-gradient(90deg, var(--danger), #ff6b8a); }
+.gap-wrap.danger .gap-label { color: var(--danger); }
+.gap-wrap.danger { animation: pulse 620ms ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* --- pace meter ---------------------------------------------------------- */
+.pace-wrap { margin-top: auto; }
+body.cam-pip .pace-wrap { padding-right: 0; }
+
+.pace-bar {
+  position: relative;
+  height: clamp(14px, 2.6vmin, 22px);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.pace-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--dim);
+  border-radius: 999px;
+  transition: width 80ms linear, background 160ms linear;
+}
+
+.pace-fill.low { background: linear-gradient(90deg, var(--danger), #ff6b8a); }
+.pace-fill.warn { background: linear-gradient(90deg, var(--warn), #ffd97a); }
+.pace-fill.good { background: linear-gradient(90deg, var(--accent), #9dffd4); }
+.pace-fill.over { background: linear-gradient(90deg, var(--accent-2), var(--violet)); }
+
+/* The line you are trying to keep the bar at: your own comfortable pace. */
+.pace-target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+  border-radius: 2px;
+}
+
+.pace-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 5px;
+  font-family: var(--num);
+  font-size: clamp(11px, 2.1vmin, 16px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+}
+
+/* --- transient messages -------------------------------------------------- */
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(26px, 8vmin, 68px);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-align: center;
+  opacity: 0;
+  color: var(--ink);
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.9);
+  transition: opacity 180ms ease;
+  white-space: nowrap;
+}
+.toast.show { opacity: 1; }
+.toast.hit { color: var(--danger); }
+.toast.good { color: var(--accent); }
+
+.tracking-warn {
+  position: absolute;
+  left: 50%;
+  bottom: 16%;
+  transform: translateX(-50%);
+  background: var(--danger);
+  color: #12000a;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: clamp(12px, 2.4vmin, 18px);
+  padding: 8px 16px;
+  border-radius: 999px;
+  animation: pulse 700ms ease-in-out infinite;
+}
+
+.hud-controls {
+  position: absolute;
+  right: calc(var(--safe-r) + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.mini-btn {
+  font: 700 10px/1 var(--font);
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  background: rgba(8, 11, 24, 0.7);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+.mini-btn.active { color: var(--accent); border-color: var(--accent); }
+
+/* ---------------------------------------------------------------------------
+ * FULL-SCREEN OVERLAY SCREENS
+ * ------------------------------------------------------------------------ */
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--safe-t) + 14px) calc(var(--safe-r) + 14px)
+           calc(var(--safe-b) + 14px) calc(var(--safe-l) + 14px);
+  /* Radial rather than flat, so the camera stays a little visible at the edges
+     during calibration — the player has to see themselves to fix framing. */
+  background: radial-gradient(ellipse at center, rgba(5, 6, 15, 0.94) 0%, rgba(5, 6, 15, 0.78) 100%);
+  overflow-y: auto;
+}
+
+/* The calibration screen must not hide the player's own image. */
+#screenCalib {
+  background: linear-gradient(to top, rgba(5, 6, 15, 0.95) 0%, rgba(5, 6, 15, 0.5) 42%, rgba(5, 6, 15, 0.15) 100%);
+  align-items: flex-end;
+}
+
+.panel {
+  width: 100%;
+  max-width: 460px;
+  text-align: center;
+}
+
+.calib-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 18px;
+  padding: 18px 18px 14px;
+  backdrop-filter: blur(8px);
+}
+
+.logo {
+  font-size: clamp(36px, 11vmin, 76px);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  margin: 0;
+  line-height: 1;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2) 55%, var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* The logo paints its text with a clipped gradient, and a child element cannot
+   inherit that — it would render with the parent's transparent fill and vanish.
+   So the ampersand gets its own solid fill rather than an opacity. */
+.logo span {
+  color: var(--dim);
+  -webkit-text-fill-color: var(--dim);
+}
+
+.tagline {
+  margin: 6px 0 18px;
+  color: var(--dim);
+  font-size: clamp(13px, 2.6vmin, 17px);
+  font-weight: 600;
+}
+
+.how {
+  list-style: none;
+  margin: 0 auto 16px;
+  padding: 0;
+  text-align: left;
+  max-width: 340px;
+  font-size: clamp(13px, 2.5vmin, 16px);
+  line-height: 1.85;
+  color: var(--ink);
+}
+.how li { border-bottom: 1px solid rgba(120, 160, 220, 0.1); }
+.how b { color: var(--accent); }
+
+.setup-note, .perm-note, .sim-note, .over-note, .err-body {
+  font-size: clamp(11px, 2.2vmin, 14px);
+  line-height: 1.55;
+  color: var(--dim);
+  margin: 0 auto 16px;
+  max-width: 360px;
+}
+.perm-note { margin-top: 14px; margin-bottom: 0; }
+.sim-note { margin-top: 10px; color: var(--warn); }
+
+kbd {
+  font: 600 0.9em var(--num);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.primary-btn {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  font: 900 clamp(16px, 3.4vmin, 22px)/1 var(--font);
+  letter-spacing: 0.16em;
+  color: #04120c;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2));
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  box-shadow: 0 8px 30px rgba(63, 255, 180, 0.22);
+}
+.primary-btn:active { transform: translateY(1px); }
+
+.ghost-btn {
+  display: block;
+  margin: 12px auto 0;
+  padding: 10px 18px;
+  font: 700 clamp(11px, 2.2vmin, 14px)/1 var(--font);
+  letter-spacing: 0.1em;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* --- calibration bits ---------------------------------------------------- */
+.calib-step {
+  font-size: clamp(10px, 1.9vmin, 12px);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+  font-weight: 800;
+}
+
+#screenCalib h2 {
+  margin: 6px 0 8px;
+  font-size: clamp(19px, 4.6vmin, 30px);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.calib-instruction {
+  margin: 0 0 4px;
+  font-size: clamp(13px, 2.7vmin, 17px);
+  font-weight: 600;
+}
+.calib-sub {
+  margin: 0 0 12px;
+  font-size: clamp(11px, 2.1vmin, 13px);
+  color: var(--dim);
+}
+
+.progress {
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 999px;
+  transition: width 110ms linear;
+}
+.calib-progress-label {
+  margin-top: 5px;
+  font: 700 clamp(10px, 2vmin, 13px)/1 var(--num);
+  color: var(--dim);
+  min-height: 1em;
+}
+
+/* Fixed min-height: hints appear and disappear constantly and must not shove
+   the layout around while the player is trying to follow them. */
+.calib-hint {
+  margin: 10px 0 0;
+  min-height: 2.6em;
+  font-size: clamp(11px, 2.3vmin, 14px);
+  line-height: 1.3;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.calib-live { min-height: 1.2em; font: 700 clamp(11px, 2.1vmin, 14px)/1 var(--num); }
+
+.calib-actions { display: flex; gap: 10px; justify-content: center; }
+.calib-actions .ghost-btn { margin-top: 8px; }
+
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(90px, 34vmin, 260px);
+  font-weight: 900;
+  color: var(--accent);
+  text-shadow: 0 0 60px rgba(63, 255, 180, 0.5);
+  pointer-events: none;
+  animation: countPop 300ms ease-out;
+}
+@keyframes countPop {
+  from { transform: scale(1.35); opacity: 0.2; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* --- game over ----------------------------------------------------------- */
+.over-title {
+  font-size: clamp(24px, 6.5vmin, 42px);
+  font-weight: 900;
+  margin: 0 0 18px;
+  color: var(--danger);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  padding: 12px 8px;
+}
+.stat-num {
+  font: 800 clamp(22px, 5.4vmin, 34px)/1 var(--num);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.stat-label {
+  font-size: clamp(9px, 1.8vmin, 11px);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.err-title { color: var(--warn); font-size: clamp(20px, 5vmin, 30px); margin: 0 0 12px; }
+.err-help {
+  text-align: left;
+  font-size: clamp(11px, 2.1vmin, 13px);
+  line-height: 1.6;
+  color: var(--dim);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.err-help code {
+  font-family: var(--num);
+  color: var(--accent-2);
+  word-break: break-all;
+}
+
+/* ---------------------------------------------------------------------------
+ * LOADING + DEBUG
+ * ------------------------------------------------------------------------ */
+.loading {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: rgba(5, 6, 15, 0.92);
+}
+.spinner {
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text {
+  font-size: clamp(12px, 2.4vmin, 15px);
+  color: var(--dim);
+  font-weight: 600;
+  text-align: center;
+  padding: 0 24px;
+}
+
+.debug-panel {
+  position: absolute;
+  left: calc(var(--safe-l) + 8px);
+  bottom: calc(var(--safe-b) + 92px);
+  z-index: 4;
+  max-width: 60vw;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  pointer-events: none;
+}
+.debug-panel pre {
+  margin: 0;
+  font: 600 10px/1.45 var(--num);
+  color: var(--accent);
+  white-space: pre;
+}
+
+/* Landscape on a short screen: give the vertical space back to the game. */
+@media (orientation: landscape) and (max-height: 460px) {
+  .how { display: none; }
+  .tagline { margin-bottom: 10px; }
+  .stat-grid { grid-template-columns: repeat(4, 1fr); }
+  .screen { align-items: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gap-wrap.danger, .tracking-warn { animation: none; }
+  .countdown { animation: none; }
+}
