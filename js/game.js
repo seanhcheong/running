@@ -376,6 +376,13 @@ window.HP = window.HP || {};
     laneLine: 0x2a3f63,
     player: 0x7dffb0,
     playerDuck: 0x62d8ff,
+    // Back-view detail. The pack is near-black for maximum contrast against the
+    // bright body — it is the cue doing most of the work (see _drawPlayer).
+    playerPack: 0x0b1a2e,
+    playerCap: 0x39d9ff,
+    playerSole: 0xdff6ff,
+    playerLimb: 0x4fdd9b,
+    playerDuckLimb: 0x3fb6dd,
     obstacleLane: 0xff4d9d,
     obstacleLow: 0xffc23d,
     obstacleHigh: 0xb478ff,
@@ -646,66 +653,169 @@ window.HP = window.HP || {};
       }
     }
 
+    /* --- the runner, seen FROM BEHIND -------------------------------------
+     * Third-person over-the-shoulder, like every endless runner: we see the
+     * player's back and they run away down the road. This orientation is not
+     * cosmetic — it is what makes "the void is behind me and the road is ahead"
+     * legible at a glance. A side-on or facing-camera avatar gives the player no
+     * sense of which way they are travelling.
+     *
+     * Selling "from behind" without a 3D model comes down to four cues:
+     *   1. a tapered back — shoulders clearly wider than hips, filled, not a
+     *      stick line, so the torso reads as a surface facing us
+     *   2. a backpack: a hard high-contrast mass centred on the spine. This is
+     *      the single strongest cue, and it is why every runner game has one
+     *   3. no face on the head, and a cap crown on TOP of the skull
+     *   4. the lifted foot showing its SOLE as the heel kicks up behind
+     *
+     * The leg motion is different from a side view. Swinging forward means
+     * swinging away from the camera, which foreshortens to almost nothing, so
+     * the visible movement is mostly the heel rising and the shin shortening —
+     * not a side-on pendulum. Getting that wrong is what makes back-view
+     * runners look like they are marching sideways.
+     * ------------------------------------------------------------------------ */
     _drawPlayer() {
       const g = this.gPlayer;
       const sim = this.sim;
       g.clear();
 
+      // Avatar size is keyed to lane width so it stays proportional to the road.
+      // The divisor is pure presence: smaller = a bigger runner. Obstacles size
+      // themselves off laneW independently, so this only moves the avatar.
+      const scale = this.laneW / 76;
       const x = this._xAt(sim.lane - 1, 0);
       const jumpPx = sim.jumpHeight * this.H;
-      const scale = this.laneW / 90;              // avatar size relative to lanes
       const duck = sim.ducking ? 1 : 0;
-      const bodyH = (58 - duck * 22) * scale;
-      const legLen = (34 - duck * 12) * scale;
-      const y = this.groundY - jumpPx;
 
-      // Shadow shrinks as you rise — the only cue that reads as "airborne".
-      const shadowScale = 1 - clamp(jumpPx / (this.H * 0.2), 0, 0.7);
-      g.fillStyle(0x000000, 0.4 * shadowScale);
-      g.fillEllipse(x, this.groundY + 3, 34 * scale * shadowScale, 9 * scale * shadowScale);
+      // Vertical bob, twice per stride (once per footfall). Killed in the air:
+      // a bobbing jump reads as a glitch rather than a leap.
+      const bob = sim.airborne ? 0 : Math.sin(this.runPhase * 2) * 1.6 * scale;
+      const groundContact = this.groundY - jumpPx + bob;
 
-      const col = sim.ducking ? COLORS.playerDuck : COLORS.player;
+      const legLen = (32 - duck * 15) * scale;
+      const torsoH = (30 - duck * 12) * scale;
+      const hipY = groundContact - legLen;
+      const shoulderY = hipY - torsoH;
+      const shHalf = 13 * scale;                  // half shoulder width
+      const hipHalf = 8.5 * scale;
+      const headR = 8.5 * scale;
+
+      // Lean into a lane change: the upper body leads and the feet trail, which
+      // is both how running works and a useful hint that a lane change is
+      // actually in progress.
+      const tilt = clamp(sim.targetLane - sim.lane, -1, 1) * 7 * scale;
+      const sx = x + tilt;
+
+      const col = duck ? COLORS.playerDuck : COLORS.player;
+      // Limbs sit a shade darker than the torso. Without this the arms vanish
+      // into the body, since everything else here is one flat fill.
+      const limb = duck ? COLORS.playerDuckLimb : COLORS.playerLimb;
       const invuln = sim.t < sim.invulnUntil;
       // Blink while invulnerable so a hit is unmistakable.
       const alpha = invuln ? (Math.floor(sim.t * 14) % 2 ? 0.35 : 1) : 1;
 
-      // Legs: swing in antiphase at the measured cadence.
-      const swing = Math.sin(this.runPhase);
-      const swing2 = Math.sin(this.runPhase + Math.PI);
-      const hipY = y - legLen;
-      g.lineStyle(Math.max(2, 7 * scale), col, alpha);
-      [swing, swing2].forEach((sw) => {
-        const kneeX = x + sw * 13 * scale;
-        const kneeY = hipY + legLen * 0.55;
-        const footX = x + sw * 20 * scale;
-        const footY = y - Math.max(0, sw) * 12 * scale;
+      /* Shadow shrinks as you rise — the only cue that reads as "airborne". */
+      const shadowScale = 1 - clamp(jumpPx / (this.H * 0.2), 0, 0.72);
+      g.fillStyle(0x000000, 0.42 * shadowScale);
+      g.fillEllipse(x, this.groundY + 3 * scale,
+        30 * scale * shadowScale, 8 * scale * shadowScale);
+
+      /* --- legs, drawn first so the torso overlaps them at the hip --------
+       * The iconic back-view running cue is the trailing leg FOLDING: knee stays
+       * around mid-thigh height while the heel comes up near the glute, sole
+       * toward the camera. Merely shortening the leg (which is what a naive
+       * foreshortening gives you) reads as marching on the spot.
+       *
+       * lift is deliberately not a plain sine. Two antiphase sines cross zero at
+       * the same instant, so both legs sit neutral for a wide window and the
+       * figure looks like it is standing. The fractional power makes each leg
+       * commit to up-or-down quickly and narrows that window. */
+      for (let i = 0; i < 2; i++) {
+        const side = i ? 1 : -1;
+        const sw = Math.sin(this.runPhase + (i ? Math.PI : 0));
+        const lift = sw > 0 ? Math.pow(sw, 0.55) : 0;     // 0..1, heel rising
+        const hx = x + side * hipHalf * 1.15;             // wider than the legs are thick
+
+        // Knee drops slightly and flares outward as the leg folds; the foot
+        // comes up to meet it from behind.
+        const kneeX = hx + side * (1.5 + lift * 3) * scale;
+        const kneeY = hipY + legLen * (0.55 + lift * 0.06);
+        const fx = hx + side * (2.5 + lift * 2) * scale;
+        const fy = groundContact - lift * legLen * 0.78;
+
+        g.lineStyle(Math.max(2, 6.2 * scale), limb, alpha);
         g.beginPath();
-        g.moveTo(x, hipY);
+        g.moveTo(hx, hipY);
         g.lineTo(kneeX, kneeY);
-        g.lineTo(footX, footY);
+        g.lineTo(fx, fy);
         g.strokePath();
-      });
+        // Round the knee: Graphics has no line caps, and a bare mitre joint
+        // reads as a broken limb at this size.
+        g.fillStyle(limb, alpha);
+        g.fillCircle(kneeX, kneeY, 3.2 * scale);
 
-      // Torso + head
-      const shoulderY = hipY - bodyH * 0.55;
-      g.lineStyle(Math.max(3, 10 * scale), col, alpha);
-      g.beginPath();
-      g.moveTo(x, hipY);
-      g.lineTo(x + duck * 6 * scale, shoulderY);
-      g.strokePath();
+        // The sole of the shoe, facing us once the foot is up behind.
+        if (lift > 0.25) {
+          g.fillStyle(COLORS.playerSole, alpha * clamp((lift - 0.25) / 0.35, 0, 1));
+          g.fillEllipse(fx, fy, 9.5 * scale, 4.6 * scale);
+        }
+      }
+
+      /* --- torso: a tapered back, wider at the shoulders ------------------ */
       g.fillStyle(col, alpha);
-      g.fillCircle(x + duck * 9 * scale, shoulderY - 11 * scale, 9 * scale);
+      g.beginPath();
+      g.moveTo(sx - shHalf, shoulderY);
+      g.lineTo(sx + shHalf, shoulderY);
+      g.lineTo(x + hipHalf, hipY);
+      g.lineTo(x - hipHalf, hipY);
+      g.closePath();
+      g.fillPath();
 
-      // Arms pumping in antiphase to the legs.
-      g.lineStyle(Math.max(2, 5 * scale), col, alpha * 0.9);
-      [swing2, swing].forEach((sw, i) => {
-        const ex = x + sw * 14 * scale * (i ? -1 : 1);
-        const ey = shoulderY + 16 * scale;
-        g.beginPath();
-        g.moveTo(x, shoulderY + 2 * scale);
-        g.lineTo(ex, ey);
-        g.strokePath();
+      /* --- backpack: the cue that makes the whole thing read as a back ---- */
+      const packW = shHalf * 1.3;
+      const packH = torsoH * 0.66;
+      g.fillStyle(COLORS.playerPack, alpha);
+      g.fillRoundedRect(sx - packW / 2, shoulderY + torsoH * 0.14,
+        packW, packH, 3 * scale);
+      // Straps over the shoulders, so it hangs off the body rather than floating.
+      g.fillStyle(COLORS.playerPack, alpha * 0.8);
+      [-1, 1].forEach((s) => {
+        g.fillRect(sx + s * shHalf * 0.62 - 1.2 * scale, shoulderY,
+          2.4 * scale, torsoH * 0.3);
       });
+
+      /* --- arms: swing in antiphase to the same-side leg ------------------ */
+      for (let i = 0; i < 2; i++) {
+        const side = i ? 1 : -1;
+        const aw = Math.sin(this.runPhase + (i ? 0 : Math.PI));
+        const ax = sx + side * shHalf * 0.92;
+        const ay = shoulderY + 2.5 * scale;
+        const ex = ax + side * (4 + 1.5 * aw) * scale;
+        const ey = ay + (10 - aw * 2.5) * scale;
+        // On the forward swing the hand vanishes in front of the body; on the
+        // back swing it reappears beside the hip.
+        const hx2 = ex + side * 1.5 * scale;
+        const hy2 = ey + (5 + aw * 5) * scale;
+        g.lineStyle(Math.max(1.5, 5 * scale), limb, alpha);
+        g.beginPath();
+        g.moveTo(ax, ay);
+        g.lineTo(ex, ey);
+        g.lineTo(hx2, hy2);
+        g.strokePath();
+        g.fillStyle(limb, alpha);
+        g.fillCircle(ex, ey, 2.6 * scale);
+      }
+
+      /* --- head: no face, cap crown on top -------------------------------
+       * A flat disc across the top of the skull, not a half-sphere: a cap seen
+       * from behind shows crown only, with no brim, which is itself a cue that
+       * we are looking at the back of someone's head. */
+      const hcx = sx + tilt * 0.25;
+      const hcy = shoulderY - headR - 1.5 * scale;
+      g.fillStyle(col, alpha);
+      g.fillCircle(hcx, hcy, headR);
+      g.fillStyle(COLORS.playerCap, alpha);
+      g.fillEllipse(hcx, hcy - headR * 0.46, headR * 1.82, headR * 0.86);
     }
 
     /* --- the consuming void ---------------------------------------------- */
