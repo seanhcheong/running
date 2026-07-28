@@ -403,6 +403,8 @@ window.HP = window.HP || {};
       this.shake = 0;      // screen shake impulse, decays
       this.flash = 0;      // white/red flash on hit
       this.voidWobble = 0;
+      // Real-clock timestamp of the previous update — see the note in update().
+      this._lastUpdateT = null;
     }
 
     create() {
@@ -468,8 +470,30 @@ window.HP = window.HP || {};
     }
 
     update(time, delta) {
-      const dt = delta / 1000;
+      /* Do NOT use Phaser's `delta`.
+       *
+       * Phaser smooths delta toward the configured target frame interval, so on
+       * a device that cannot hold 60fps it keeps reporting ~16.7ms and game time
+       * silently runs at (actualFps / 60) of real time. Measured here at 37fps:
+       * 60 sim steps in 3.01s, every dt exactly 16.7ms, so the sim advanced 1.0s
+       * in 3.0s of real time.
+       *
+       * That is fatal for this game rather than merely cosmetic. The player's
+       * cadence is measured on a real monotonic clock, so paceRatio is in real
+       * time — but speed, gap, the void's ramp and graceSeconds would all be in
+       * slowed sim time. A slower phone would get a slow-motion void, a longer
+       * grace window and a stretched difficulty curve. The whole premise is
+       * coupling real physical effort to in-game consequence, so the sim has to
+       * share the pose tracker's clock.
+       *
+       * maxTimestep still guards the backgrounded-tab case, inside sim.update. */
+      const now = util.now();
+      const dt = this._lastUpdateT === null
+        ? 0
+        : clamp(now - this._lastUpdateT, 0, this.cfg.game.maxTimestep);
+      this._lastUpdateT = now;
       const sim = this.sim;
+      if (dt <= 0) return;
 
       // The sim is advanced from here so simulation and rendering share exactly
       // one clock — no interpolation mismatch, no double-stepping.

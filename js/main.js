@@ -473,8 +473,9 @@ window.HP = window.HP || {};
         width: '100%',
         height: '100%',
       },
-      // The sim clamps its own timestep, so a dropped frame can never teleport
-      // the void — no fixed-step accumulator needed here.
+      // Target only drives Phaser's own loop. RunScene deliberately ignores the
+      // `delta` Phaser hands it — that value is smoothed toward this target, so
+      // it lies on any device that misses 60fps. See the note in RunScene.update.
       fps: { target: 60 },
       banner: false,
       scene: scene,
