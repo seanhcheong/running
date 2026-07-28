@@ -134,9 +134,15 @@ body.cam-off #video, body.cam-off #debugCanvas { opacity: 0; }
 
 .hud-row { display: flex; align-items: flex-start; gap: 12px; }
 .hud-top { justify-content: space-between; }
-/* Keep the top row clear of the camera PIP (which is min(23vmin,132px) wide,
-   inset 8px) with a little breathing room rather than a hairline miss. */
-body.cam-pip .hud-top { padding-right: min(27vmin, 154px); }
+/* Keep everything in the top cluster clear of the camera PIP (min(23vmin,132px)
+   wide, inset 8px), with breathing room rather than a hairline miss.
+   The gap bar needs this as much as the readouts do: the PIP is ~30vmin TALL, so
+   it hangs well below the top row and would otherwise sit on top of the right
+   end of the void-proximity bar — the one element the player must be able to
+   read while out of breath. The bar is a proportional meter, so losing width
+   costs nothing; losing visibility costs the run. */
+body.cam-pip .hud-top,
+body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
 
 .hud-block { min-width: 0; }
 .hud-block.hud-right { text-align: right; }
