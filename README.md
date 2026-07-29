@@ -64,9 +64,27 @@ chrome, which the HUD is designed around.
 
 This matters more than anything in the code:
 
-- Prop the phone **low — knee height or below, tilted up**. A camera near the
-  floor looking up fits a standing body from much closer than one at waist
-  height looking straight out. This is the biggest win when space is tight.
+- Prop the phone **low — knee height or below**, standing roughly **upright**
+  against a wall or skirting board rather than lying back. A camera near the
+  floor fits a standing body from much closer than one at waist height, which is
+  the biggest win when space is tight.
+
+  **Keep the tilt under about 45°, and never lay the phone flat.** Every
+  threshold is a fraction of your shoulder-to-hip length *as it appears on
+  screen*, and tilting up foreshortens it. Measured, with perfect keypoints:
+
+  | Tilt | Torso on screen | Lean needs | Duck needs |
+  | --- | --- | --- | --- |
+  | 0° | 100px | 30px | 19px |
+  | 45° | 71px | 21px | 13px |
+  | 75° | 26px | 8px | 5px |
+
+  Keypoint jitter is a roughly fixed few pixels and does *not* shrink with
+  tilt, so past ~45° real gestures and noise become hard to tell apart and you
+  get phantom ducks and lane changes. Cadence is unaffected — it is normalised
+  by the same shrinking ruler, so the ratio holds — but lean, jump and duck all
+  degrade. Flat on the floor pointing at the ceiling fails outright: the
+  vertical axis of the image stops corresponding to real height at all.
 - Stand back until you are in frame **from head to knees**. **Your feet do not
   need to be visible** — nothing reads them. Cadence comes from your knees
   alternating, body scale from shoulders-to-hips, jump and duck from your hips.
