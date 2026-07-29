@@ -52,11 +52,23 @@ at knee height 6–10ft out, everything normalised by shoulder-to-hip distance.
 | Exercise | Signal | Notes |
 | --- | --- | --- |
 | Squat | `hipOffset` past a deeper threshold than `duckEnter` | Effectively already implemented |
-| Jumping jack | wrists above shoulders **and** ankle-x separation widening, in phase | Two independent signals; very robust |
+| Jumping jack | wrists above shoulders **and** knee-x separation widening, in phase | Two independent signals; very robust |
 | High knees | existing cadence with a raised amplitude gate | A "sprint" variant |
-| Butt kicks | ankle-to-hip distance shrinking while knee y holds | Moderate |
 | Skater / lateral hop | `centerOffset` + `hipVelocity` together | Free |
-| Side lunge | ankle-x separation + moderate hip drop, torso upright | Prefer over forward lunge — see below |
+| Side lunge | knee-x separation + moderate hip drop, torso upright | Prefer over forward lunge — see below |
+| ~~Butt kicks~~ | heel travelling toward the glute | **Needs feet in frame** — see below |
+
+> **Leg-spread signals must key off KNEES, not ankles.** `requiredKeypoints` stops
+> at the knees so the player can stand ~25% closer, which means feet are usually
+> outside the frame. Knees separate in a jumping jack and a side lunge too, so
+> nothing is lost. Butt kicks are the exception and drop out of Tier 1: the heel
+> travelling to the glute *is* the exercise, so there is no knee-based
+> substitute. Either require feet for that one movement or leave it out.
+>
+> Overhead movements need headroom instead: a jack only registers if the raised
+> wrists are inside the frame. A floor-level camera tilted slightly up gains
+> headroom as it loses floor, which happens to suit this — but it is a real
+> constraint on the framing step, not a free assumption.
 
 ### Tier 2 — needs a new state machine, but sound
 
@@ -249,11 +261,13 @@ is just a deeper duck with rep counting instead of a held state.
 ### Jumping jack — 2 signals ANDed
 
 ```
-CLOSED ──wristsAboveShoulders AND ankleSpread > openWidth──▶ OPEN
-OPEN   ──NOT wristsAbove      AND ankleSpread < closeWidth──▶ CLOSED  ⇒ rep
+CLOSED ──wristsAboveShoulders AND kneeSpread > openWidth──▶ OPEN
+OPEN   ──NOT wristsAbove      AND kneeSpread < closeWidth──▶ CLOSED  ⇒ rep
 ```
-Requiring **both** arms and legs is what stops arm-flapping from scoring. This is
-the most robust of the lot and the right one to build first.
+Requiring **both** arms and legs is what stops arm-flapping from scoring. Knee
+spread rather than ankle spread, because feet are outside the frame at the
+distance the framing step asks for. This is the most robust of the lot and the
+right one to build first.
 
 ### Burpee — 4 states, the interesting one
 
