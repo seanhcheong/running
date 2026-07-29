@@ -370,17 +370,37 @@ window.HP = window.HP || {};
       }
 
       const c = this.cfg.camera;
-      const constraints = {
-        audio: false,
-        video: {
-          facingMode: c.facingMode,
-          width: { ideal: c.width },
-          height: { ideal: c.height },
-          frameRate: { ideal: c.frameRate },
-        },
+
+      /* Widest-view request. aspectRatio is stated explicitly as well as
+       * width/height because some implementations honour one and ignore the
+       * other, and getting 16:9 instead of 4:3 silently crops away the vertical
+       * field of view this game depends on. */
+      const preferred = {
+        facingMode: c.facingMode,
+        width: { ideal: c.width },
+        height: { ideal: c.height },
+        aspectRatio: { ideal: c.width / c.height },
+        frameRate: { ideal: c.frameRate },
+        resizeMode: c.resizeMode,
       };
 
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const deviceId = c.preferWideAngleDevice ? await this._findWideAngleCamera() : null;
+      if (deviceId) preferred.deviceId = { exact: deviceId };
+
+      /* Fall back rather than fail. Unknown constraint keys are ignored by
+       * browsers, but an exact deviceId or an unsatisfiable aspectRatio can
+       * throw OverconstrainedError — and a working narrow camera beats no
+       * camera at all. */
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: preferred });
+      } catch (err) {
+        console.warn('[HP] widest-view constraints rejected (' + err.name +
+          '), retrying with defaults:', err.message);
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: c.facingMode },
+        });
+      }
       this.video.srcObject = this.stream;
       // iOS Safari refuses to play an inline video without these attributes,
       // and Capacitor's WKWebView behaves the same way.
@@ -418,11 +438,68 @@ window.HP = window.HP || {};
       }
 
       const track = this.stream.getVideoTracks()[0];
+      await this._zoomOut(track);
+
       const settings = track && track.getSettings ? track.getSettings() : {};
-      console.log('[HP] camera:', this.video.videoWidth + 'x' + this.video.videoHeight,
-        settings.frameRate ? '@' + Math.round(settings.frameRate) + 'fps' : '');
+      const vw = this.video.videoWidth, vh = this.video.videoHeight;
+      console.log('[HP] camera:', vw + 'x' + vh,
+        settings.frameRate ? '@' + Math.round(settings.frameRate) + 'fps' : '',
+        '| aspect ' + (vw && vh ? (Math.max(vw, vh) / Math.min(vw, vh)).toFixed(2) : '?') + ':1',
+        settings.resizeMode ? '| resizeMode ' + settings.resizeMode : '',
+        settings.zoom !== undefined ? '| zoom ' + settings.zoom : '');
+      // 4:3 is 1.33. Anything near 1.78 means we were given a 16:9 crop and lost
+      // vertical view, which is the usual cause of "my feet are cut off".
+      if (vw && vh && Math.max(vw, vh) / Math.min(vw, vh) > 1.5) {
+        console.warn('[HP] camera returned a widescreen crop (' + vw + 'x' + vh +
+          '). Vertical field of view is reduced — stand further back.');
+      }
 
       return this.stream;
+    }
+
+    /**
+     * Some devices expose more than one front camera, e.g. a normal and an
+     * ultra-wide. Labels are only populated once permission has been granted, so
+     * this returns null on a first-ever run and simply works on later ones.
+     */
+    async _findWideAngleCamera() {
+      if (!navigator.mediaDevices.enumerateDevices) return null;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter((d) => d.kind === 'videoinput' && d.label);
+        if (cams.length < 2) return null;
+        const hints = this.cfg.camera.wideAngleLabelHints || [];
+        const front = cams.filter((d) => /front|user|face/i.test(d.label));
+        const pool = front.length ? front : cams;
+        const wide = pool.find((d) => {
+          const label = d.label.toLowerCase();
+          return hints.some((h) => label.indexOf(h) >= 0);
+        });
+        if (wide) console.log('[HP] using wide-angle camera:', wide.label);
+        return wide ? wide.deviceId : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    /** Wind any digital zoom back to its minimum — "zoom out as far as it goes". */
+    async _zoomOut(track) {
+      if (!this.cfg.camera.zoomToMinimum) return;
+      if (!track || !track.getCapabilities || !track.applyConstraints) return;
+      let caps;
+      try { caps = track.getCapabilities(); } catch (e) { return; }
+      if (!caps || !caps.zoom || typeof caps.zoom.min !== 'number') return;
+      const current = track.getSettings ? track.getSettings().zoom : undefined;
+      if (current !== undefined && current <= caps.zoom.min) return;
+      try {
+        // `advanced` so a device that cannot honour it degrades instead of
+        // throwing and killing an otherwise good stream.
+        await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
+        console.log('[HP] zoomed out: ' + current + ' -> ' + caps.zoom.min +
+          ' (range ' + caps.zoom.min + '-' + caps.zoom.max + ')');
+      } catch (e) {
+        console.warn('[HP] could not apply minimum zoom:', e.message);
+      }
     }
 
     stopCamera() {
@@ -786,15 +863,24 @@ window.HP = window.HP || {};
       const kps = this.keypointMap;
       if (!kps || !this.video || !this.video.videoWidth) return;
 
-      /* The video is displayed with object-fit: cover, so replicate that
-       * transform to place keypoints exactly over the visible image.
+      /* Replicate the video element's own object-fit/object-position so the
+       * skeleton lands exactly over the visible image. The fit mode is READ from
+       * computed style rather than assumed, because it differs between
+       * calibration (contain) and play (cover) — see the CSS.
        * Note the video element is CSS-mirrored and our coordinates are already
        * mirrored, so no extra flip belongs here. */
       const vw = this.video.videoWidth;
       const vh = this.video.videoHeight;
-      const scale = Math.max(cssW / vw, cssH / vh);
-      const offX = (cssW - vw * scale) / 2;
-      const offY = (cssH - vh * scale) / 2;
+      const cs = window.getComputedStyle(this.video);
+      const scale = cs.objectFit === 'contain'
+        ? Math.min(cssW / vw, cssH / vh)
+        : Math.max(cssW / vw, cssH / vh);
+      // object-position as fractions; default '50% 50%' if unparseable.
+      const pos = (cs.objectPosition || '50% 50%').split(/\s+/);
+      const fx = parseFloat(pos[0]) / 100;
+      const fy = parseFloat(pos.length > 1 ? pos[1] : pos[0]) / 100;
+      const offX = (cssW - vw * scale) * (isNaN(fx) ? 0.5 : fx);
+      const offY = (cssH - vh * scale) * (isNaN(fy) ? 0.5 : fy);
       const px = (x) => offX + x * scale;
       const py = (y) => offY + y * scale;
 

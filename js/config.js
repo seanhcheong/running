@@ -24,10 +24,35 @@ window.HP.CONFIG = {
   camera: {
     // Requested capture size. Small is GOOD: MoveNet Lightning downsamples to
     // 192x192 anyway, and a smaller stream costs far less GPU on phones.
+    //
+    // KEEP THIS 4:3. Phone sensors are natively 4:3, so asking for 16:9 makes
+    // the camera crop the top and bottom away — which costs exactly the vertical
+    // field of view this game needs to see you from head to ankles.
     width: 640,
     height: 480,
     frameRate: 30,
     facingMode: 'user', // front camera — the player faces the phone
+
+    /* --- field of view -----------------------------------------------------
+     * Fitting a whole standing body in frame is the single hardest part of
+     * setting this game up, so we ask for the widest view the hardware will
+     * give us. Three separate levers, because they fail independently:
+     * -------------------------------------------------------------------- */
+
+    // 'none' asks the browser NOT to crop-and-scale the sensor down to our
+    // requested size. The default ('crop-and-scale') is allowed to letterbox or
+    // centre-crop to hit the numbers above, silently narrowing the view.
+    resizeMode: 'none',
+
+    // Many phones expose a digital zoom that does not default to 1x. If the
+    // track reports a zoom capability, wind it to its minimum — this is
+    // literally "zoom out as far as this camera goes".
+    zoomToMinimum: true,
+
+    // If the device lists several front cameras (some Androids expose a normal
+    // and an ultra-wide), prefer one whose label looks wide-angle.
+    preferWideAngleDevice: true,
+    wideAngleLabelHints: ['ultra', 'wide', '0.5'],
 
     // The raw front-camera image is NOT mirrored, so the player's left hand
     // appears on the right of the frame. We mirror every keypoint x once, right

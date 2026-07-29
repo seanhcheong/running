@@ -79,10 +79,22 @@ html, body {
 }
 
 #video {
-  object-fit: cover;
   background: #000;
   z-index: 0;
 }
+
+/* Fit mode is deliberately different per mode, and drawDebug() reads the
+   computed value so the skeleton stays in register either way.
+
+   Calibration uses `contain`: the player is being asked "is your whole body in
+   frame?", and `cover` crops the feed to the screen's aspect, so they would be
+   judging that against an image whose real edges they cannot see. Letterboxed
+   and honest beats full-bleed and misleading.
+
+   Play uses `cover`, because the PIP is a small glance-at-it mirror where
+   filling the box matters more than showing the exact margins. */
+body.cam-full #video { object-fit: contain; object-position: 50% 38%; }
+body.cam-pip #video { object-fit: cover; object-position: 50% 50%; }
 
 #debugCanvas { z-index: 1; pointer-events: none; }
 
