@@ -1,0 +1,63 @@
+# =============================================================================
+# Deploy to GitHub Pages
+# =============================================================================
+# Publishes the repo root as a static site, which is all this game needs: there
+# is no build step, and every library is committed under vendor/.
+#
+# Why a workflow instead of Settings -> Pages -> "Deploy from a branch": that
+# option is unavailable on accounts where Pages is restricted to Actions-only.
+# `configure-pages` with enablement:true turns Pages on through the API, so no
+# manual dropdown is involved.
+#
+# The point of deploying at all is HTTPS. Browsers only grant getUserMedia on a
+# secure origin, so the camera — and therefore the entire game — cannot work
+# from a plain http:// address on a phone.
+# =============================================================================
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    # The claude/* branch is currently this repo's default branch; main is listed
+    # so the workflow keeps working if the history is later merged there.
+    branches:
+      - claude/huffpuff-fitness-game-ozvn7c
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; queue instead of cancelling so a push is not lost.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Create/enable the Pages site via the API rather than the UI.
+          enablement: true
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # The whole repo is the site. The action already excludes .git and
+          # .github, and vendor/ must be included — those are the game's
+          # libraries, not build inputs.
+          path: .
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v4
