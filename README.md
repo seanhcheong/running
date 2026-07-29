@@ -64,9 +64,13 @@ chrome, which the HUD is designed around.
 
 This matters more than anything in the code:
 
-- Prop the phone at roughly **knee height**, leaning against something.
-- Stand **6–10 feet back**, far enough that your **whole body** — head to ankles
-  — is in frame. If your feet are cut off, cadence detection cannot work.
+- Prop the phone **low — knee height or below, tilted up**. A camera near the
+  floor looking up fits a standing body from much closer than one at waist
+  height looking straight out. This is the biggest win when space is tight.
+- Stand back until you are in frame **from head to knees**. **Your feet do not
+  need to be visible** — nothing reads them. Cadence comes from your knees
+  alternating, body scale from shoulders-to-hips, jump and duck from your hips.
+  Requiring ankles would cost about 25% more standing distance for no gain.
 - Bright, even light. Avoid a window directly behind you; you will be a
   silhouette and every keypoint score will collapse.
 - Clear the space around you. You will be moving and not looking at the floor.

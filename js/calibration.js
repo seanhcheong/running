@@ -33,9 +33,12 @@ window.HP = window.HP || {};
 
   const STEP_COPY = {
     framing: {
-      title: 'Get your whole body in frame',
-      instruction: 'Step back until your head AND feet are visible.',
-      sub: 'Prop the phone against something at about knee height.',
+      title: 'Get in frame, head to knees',
+      instruction: 'Step back until your head and knees are both visible.',
+      // Saying feet are not needed up front saves the player backing away
+      // further than they have to — see config.requiredKeypoints.
+      sub: 'Your feet don\'t need to be in frame. Propping the phone low and ' +
+        'tilting it up helps if you\'re short on space.',
     },
     neutral: {
       title: 'Stand still',
@@ -230,19 +233,24 @@ window.HP = window.HP || {};
       }
     }
 
-    /** Turn missing keypoints into an instruction the player can act on. */
+    /**
+     * Turn missing keypoints into an instruction the player can act on.
+     * Knees are the deepest thing required (see config.requiredKeypoints — feet
+     * deliberately do not have to be in frame), so they are the first check.
+     */
     _missingHint(missing) {
       const has = (n) => missing.indexOf(n) >= 0;
-      if (has('left_ankle') || has('right_ankle')) {
-        return 'Your feet are out of frame — step back or tilt the phone down.';
-      }
       if (has('left_knee') || has('right_knee')) {
-        return 'Your knees are out of frame — step back a bit further.';
+        return 'Your knees need to be in frame — step back, or prop the phone ' +
+          'lower and tilt it up.';
       }
       if (has('left_hip') || has('right_hip')) {
         return 'Step back so your hips are visible.';
       }
-      return 'Move so your whole body is inside the frame.';
+      if (has('left_shoulder') || has('right_shoulder')) {
+        return 'Move so your head and shoulders are inside the frame.';
+      }
+      return 'Move so your body from head to knees is inside the frame.';
     }
 
     /* --- 2. neutral standing baseline ------------------------------------- */

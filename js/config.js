@@ -27,7 +27,7 @@ window.HP.CONFIG = {
     //
     // KEEP THIS 4:3. Phone sensors are natively 4:3, so asking for 16:9 makes
     // the camera crop the top and bottom away — which costs exactly the vertical
-    // field of view this game needs to see you from head to ankles.
+    // field of view this game needs to see you from head to knees.
     width: 640,
     height: 480,
     frameRate: 30,
@@ -352,12 +352,26 @@ window.HP.CONFIG = {
   calibration: {
     // Step 1 — framing. Full body must stay detected this long, continuously.
     framingHoldSeconds: 2.0,
-    // Keypoints that must all be visible for "full body detected".
+    /* Keypoints that must all be visible before framing is accepted.
+     *
+     * ANKLES ARE DELIBERATELY NOT HERE. Nothing in the game reads them: body
+     * scale comes from shoulders-to-hips, lean from those midpoints, jump and
+     * duck from the hips, and cadence from the KNEES. Ankles only ever appeared
+     * in a hint string and in the debug skeleton's shin bones.
+     *
+     * Requiring them made the gate stricter than the mechanics: it asked the
+     * player to fit ~96% of their height in frame when only the top ~72% is
+     * used, which costs about 25% more standing distance — the difference
+     * between needing 8 feet and needing 6. Fitting a whole body in a phone's
+     * field of view is the hardest part of setting this game up, so that
+     * distance is worth more than the tidiness of a head-to-toe silhouette.
+     *
+     * Add 'left_ankle', 'right_ankle' back if you want the stricter gate; the
+     * mechanics behave identically either way. */
     requiredKeypoints: [
       'left_shoulder', 'right_shoulder',
       'left_hip', 'right_hip',
       'left_knee', 'right_knee',
-      'left_ankle', 'right_ankle',
     ],
     // Step 2 — lighting hint. If mean confidence sits below this for
     // lowConfidenceHintAfter seconds, prompt for better lighting instead of
