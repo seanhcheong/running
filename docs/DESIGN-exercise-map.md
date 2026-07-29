@@ -61,7 +61,9 @@ at knee height 6–10ft out, everything normalised by shoulder-to-hip distance.
 ### Tier 2 — needs a new state machine, but sound
 
 - **Burpee.** A 4-state sequence (§4). Detectable as *honest reps*; **form is not
-  judgeable** and we should not pretend otherwise.
+  judgeable** and we should not pretend otherwise. ⚠️ Requires the floor to be in
+  frame, which the standing setup does not provide — see the framing conflict
+  below, which is the thing that actually decides whether this is buildable.
 - **Alternating forward lunge.** Structurally the *same signal as running* —
   knee-height asymmetry — just slower and deeper. Reuses `kneeDiff` with a
   different deadband and interval band.
@@ -72,6 +74,61 @@ at knee height 6–10ft out, everything normalised by shoulder-to-hip distance.
 - **Push-ups, mountain climbers.** Prone and facing *away*: the camera sees the
   top of the head, and the torso foreshortens to nearly nothing — which also
   destroys `bodyScale`, the normaliser everything else depends on.
+
+### THE FRAMING CONFLICT — measured, and it breaks the burpee plan
+
+The tier list above quietly assumes one camera setup serves every exercise. It
+does not, and the conflict is not about which keypoints you need — it is about
+**where the camera is pointing.**
+
+Standing framing wants the phone **low and tilted UP**, which maximises vertical
+coverage of an upright body and is what the setup copy now recommends. That aim
+points the camera *away from the floor*. Floor exercises need the opposite.
+
+Simulated one burpee against the real tracker, with the floor just below the
+frame (out-of-image keypoints given the near-zero confidence MoveNet actually
+returns):
+
+```
+ 1 standing        tracked: true    shoulders 0.9  hips 0.9  knees 0.9
+ 2 squat           tracked: true    shoulders 0.9  hips 0.9  knees 0.9
+ 3 down (floor)    tracked: FALSE   shoulders 0.02 hips 0.02 knees 0.02
+ 4 back up         tracked: true    shoulders 0.9  hips 0.9  knees 0.9
+```
+
+The down phase is **entirely invisible**. All six core keypoints fall below
+`minKeypointScore`, `coreVisible` goes false, and `_handleLostPose` runs — so the
+`bodyScale`-collapse signal the burpee state machine in §4 is built on **never
+fires**, because there is no pose at all to measure it from.
+
+Worse, in-game this trips `trackingLossGraceSeconds`: an unmodified build reads a
+burpee as *"the player has left the frame"* and freezes the void.
+
+Consequences for this design:
+
+- **Framing is a per-segment property, not a global setup step.** A `floor`
+  segment needs the camera aimed differently from a `run` segment, so segments
+  must carry framing requirements, and the map loader has to reject a map that
+  mixes incompatible ones without a re-framing beat between them.
+- **A compromise framing exists but is expensive.** One camera position covering
+  floor-to-standing-head, level rather than tilted up, needs a frame roughly the
+  player's height in *both* axes — so meaningfully more distance, which is the
+  resource players have least of. It also shrinks the standing body in frame,
+  costing keypoint precision for the running segments that dominate play.
+- **Re-aiming mid-session is not an option.** You cannot ask someone to bend down
+  and re-prop a phone while a void is chasing them.
+- **There is a crude fallback**: "descended, vanished from frame for 0.5–3s,
+  reappeared standing" is a usable burpee signature that needs no floor
+  visibility at all. It is spoofable — ducking below frame satisfies it — and it
+  cannot count depth or form, so it is only honest with a rep-time floor and a
+  clear label that it is generous.
+
+**So v1 of the map should be standing-only.** That is exactly the Tier 1 list —
+squats, jacks, high knees, lateral hops, side lunges, butt kicks — which reuses
+signals that already exist, needs no re-framing, and is a complete workout.
+Burpees, push-ups, planks and mountain climbers belong in a separate **floor
+mode** with its own framing step and its own calibration, entered deliberately
+between sessions rather than mid-run.
 
 ### The trick that rescues floor work
 
