@@ -29,14 +29,36 @@ python3 -m http.server 8000
 # then open http://localhost:8000
 ```
 
-**On your phone** (which is the point) — you need HTTPS. Easiest is a tunnel:
+**On your phone** (which is the point) — you need **HTTPS**. Browsers only grant
+camera access on a secure origin, so opening `http://192.168.x.x:8000` from your
+phone will fail no matter what else is right. This is the single most common way
+setup goes wrong.
+
+Two ways to get HTTPS:
+
+*Tunnel from your laptop* — works on any account, nothing to configure:
 
 ```sh
 python3 -m http.server 8000
-npx localtunnel --port 8000     # or: cloudflared tunnel --url http://localhost:8000
+# in a second terminal:
+cloudflared tunnel --url http://localhost:8000
 ```
 
-Open the `https://…` URL it prints on your phone.
+Open the `https://….trycloudflare.com` URL it prints. (`npx localtunnel --port
+8000` also works but shows an interstitial you must click through first.) Your
+laptop has to stay awake.
+
+*GitHub Pages* — a permanent URL with no laptop involved. Requires one manual
+step that cannot be automated: **Settings → Pages → Source → "GitHub Actions"**,
+then run the "Deploy to GitHub Pages" workflow from the Actions tab. Creating a
+Pages site needs admin scope that `GITHUB_TOKEN` is never granted, so the
+workflow can deploy but cannot switch Pages on. If those source options are
+greyed out, Pages is blocked for your account — enterprise-managed accounts
+often cannot publish Pages from personal repos — and the tunnel is your route.
+
+Once it loads on the phone, use **Add to Home Screen**: the meta tags and
+safe-area CSS are set up for it, so it launches full-screen with no browser
+chrome, which the HUD is designed around.
 
 ### Physical setup
 

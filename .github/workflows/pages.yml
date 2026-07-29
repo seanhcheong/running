@@ -4,24 +4,39 @@
 # Publishes the repo root as a static site, which is all this game needs: there
 # is no build step, and every library is committed under vendor/.
 #
-# Why a workflow instead of Settings -> Pages -> "Deploy from a branch": that
-# option is unavailable on accounts where Pages is restricted to Actions-only.
-# `configure-pages` with enablement:true turns Pages on through the API, so no
-# manual dropdown is involved.
-#
 # The point of deploying at all is HTTPS. Browsers only grant getUserMedia on a
 # secure origin, so the camera — and therefore the entire game — cannot work
 # from a plain http:// address on a phone.
+#
+# ---------------------------------------------------------------------------
+# ONE-TIME MANUAL STEP, which this workflow cannot do for you
+# ---------------------------------------------------------------------------
+# Pages must already be switched on for the repo before this can deploy:
+#
+#     Settings -> Pages -> Source -> "GitHub Actions"
+#
+# An earlier version of this file tried to skip that with
+# `configure-pages: enablement: true`, which failed:
+#
+#     Create Pages site failed. Error: Resource not accessible by integration
+#
+# Creating a Pages site needs admin scope, and the automatic GITHUB_TOKEN is
+# never granted it — `permissions:` cannot ask for it either. So enabling Pages
+# takes a human, a PAT with admin rights, or nothing at all.
+#
+# If the Settings -> Pages source options are greyed out entirely, Pages is
+# blocked for the account (common on enterprise-managed accounts) and no
+# workflow can work around it. Use a tunnel instead — see the README.
+#
+# Trigger is manual only, so the repo does not collect a failing run on every
+# push while Pages is still off. Once it deploys successfully, add:
+#
+#     push:
+#       branches: [claude/huffpuff-fitness-game-ozvn7c, main]
 # =============================================================================
 name: Deploy to GitHub Pages
 
 on:
-  push:
-    # The claude/* branch is currently this repo's default branch; main is listed
-    # so the workflow keeps working if the history is later merged there.
-    branches:
-      - claude/huffpuff-fitness-game-ozvn7c
-      - main
   workflow_dispatch:
 
 permissions:
@@ -44,11 +59,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Reads the existing Pages config. It cannot create one — see the note at
+      # the top of this file.
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          # Create/enable the Pages site via the API rather than the UI.
-          enablement: true
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
