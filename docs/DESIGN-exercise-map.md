@@ -301,9 +301,92 @@ defences, all already idiomatic in this codebase:
 
 ## 5. The pose stencil
 
-Your instinct — a silhouette rushing at you — is the *Hole in the Wall* format,
-and it is the right visual. One catch: **a stencil is a static shape and an
-exercise is a movement.** A burpee cannot be one silhouette.
+### Why this beats the rep gate
+
+A stencil wall is not a softer version of §1's gate — it **solves** §1's problem.
+
+The reason burpees cannot be obstacles is tempo: a rep takes 2–4 seconds and the
+obstacle pipeline gives 3.7 seconds of warning. But **hitting a shape is not a
+rep.** Matching a pose takes roughly 0.5–1 second, which fits inside that warning
+window comfortably. So pose-match walls can live in the existing obstacle stream
+alongside `lane` / `low` / `high` — no gate, no segment cursor, no halting the
+player, nothing new in the sim's structure.
+
+That makes this the cheapest path to strength-ish work by a wide margin, and it
+should come before the gate machinery in §8.
+
+The trade-off is honest: a wall tests **positions**, a gate tests **repetitions**.
+A wall cannot make you do six squats; it can make you hit the bottom of one, over
+and over, at whatever rate the map spawns them. For a game whose core loop is
+already "sustain effort under pressure", spaced pose-hits may well be the better
+exercise anyway — and they never interrupt the run.
+
+### How matching actually works
+
+This is nearly free, because the hard part is already built. Keypoints are
+normalised by body scale, so a pose match is just a distance comparison in
+body-scale units:
+
+```
+error = mean( |live[joint] - target[joint]| ) over the matched joints,
+        both expressed in body-scale units relative to the hip midpoint
+pass  = error < poseMatchTolerance     (~0.15 bs to start)
+```
+
+Because both sides are body-scale normalised, this is automatically invariant to
+how far away the player stands and how tall they are — which is the same property
+that makes every existing threshold work. No new machinery, no ML, no training.
+
+Add a `minHoldFrames` so a shape has to be *held* for a moment rather than swept
+through, and the same anti-cheese logic as §4 applies.
+
+### Two constraints on the pose vocabulary
+
+**No depth.** MoveNet gives 2D keypoints, so poses differing only in depth — arm
+forward versus arm back — are indistinguishable. That sounds limiting until you
+notice it is *the stencil's own limitation too*: if two poses project to the same
+silhouette, the player could not tell them apart from the wall either. The
+mechanic and the sensor have exactly the same blind spot, so design the poses as
+silhouettes and nothing is lost.
+
+**Head to knees only.** Framing does not include feet (§2), so a pose must be
+distinguishable from the top ~72% of the body. Fine: star, squat-bottom, side
+bend, overhead reach, single-knee-raise, arms-crossed. Not fine: anything defined
+by foot placement.
+
+### How it meets the three lanes
+
+The lanes already exist — 3 of them, `laneCount: 3`, lean to change. Three ways to
+combine them, in increasing difficulty:
+
+| | Wall | Demands |
+| --- | --- | --- |
+| A | Full width, one pose | pose only; lane irrelevant |
+| B | Full width, hole in one lane | pose **and** be in that lane |
+| C | Different pose per lane | rejected — three silhouettes is far too much to read at speed while winded |
+
+Start with **A**, since it isolates the new mechanic. **B** is the interesting one
+long-term: it composes the existing lane verb with the new pose verb, and the
+combination is legible because the hole's position tells you the lane and its
+shape tells you the pose, in one glance, with no text.
+
+### Where the target poses come from
+
+Two options, and the second is better:
+
+1. **Hand-authored** normalised keypoint sets. Works, but every pose is a guess
+   about what an average body can reach.
+2. **Recorded from the player** during setup: "copy this shape" once per pose, and
+   store *their* version as the target. Guarantees the pose is achievable by that
+   body, personalises the difficulty exactly as the cadence calibration already
+   does, and makes the stencil drawn on the wall literally their own silhouette.
+   Costs setup time, so it belongs behind a one-off "unlock this exercise" flow
+   rather than the per-session calibration.
+
+### The movement-versus-shape catch
+
+One catch remains: **a stencil is a static shape and an exercise is a movement.** A
+burpee cannot be one silhouette.
 
 Resolution: the stencil shows the **key frame** — the extreme of the movement
 (bottom of the squat, star of the jack) — and carries N pips. Each rep fills a
@@ -360,18 +443,30 @@ Setup stays where it is.
 
 Deliberately sequenced so the riskiest assumption dies first and cheapest.
 
-1. **`jack` + `squat` detectors** with unit tests against synthetic keypoints.
-   Both Tier 1, both reuse existing signals. No game changes yet.
-2. **One `gate` segment**, hardcoded, mid-run. This is the whole bet: *is the
-   void closing while you squat thrilling, or is it annoying?*
-3. **Stop and evaluate.** If the gate feels like an interruption rather than a
-   climax, the map structure is wrong and better to learn it here than after six
-   exercises exist.
-4. Only then: `js/maps.js` + the segment cursor + `rest` segments.
-5. Then `floor` segments, side-on facing, and the burpee state machine.
-6. Then the stencil rendering, replacing the placeholder text label.
+Revised, because the pose wall (§5) turned out to be both cheaper and less
+invasive than the gate: it needs no new sim structure at all.
 
-Step 2 is a day's work and answers the only question that matters.
+1. **A pose-match comparator** — `error = mean normalised joint distance`, plus a
+   hold requirement. Pure function of the metrics snapshot, unit-testable against
+   synthetic keypoints, no game changes.
+2. **One `pose` obstacle kind** in the existing stream, single hand-authored
+   target (a star), full-width wall, placeholder rendering. This rides the
+   pipeline that already spawns, warns, and resolves obstacles.
+3. **Stop and evaluate.** *Can you actually hit a shape while running in place
+   and out of breath?* If yes, the entire strength layer has a home. If it feels
+   like flailing, no amount of gate machinery would have saved it.
+4. Then the stencil silhouette drawn from the player's own calibrated
+   proportions, replacing the placeholder.
+5. Then wall variant **B** — a hole in one lane, composing pose with the existing
+   lane verb.
+6. Only then the rep-based `gate` and the segment cursor, for exercises that
+   genuinely need counted reps rather than positions.
+7. Floor mode last: separate framing, separate calibration, burpees and
+   push-ups.
+
+Step 2 is a day's work and answers the only question that matters. Note it comes
+*before* any of the segment/map architecture — that machinery is only worth
+building once something needs it.
 
 ---
 
