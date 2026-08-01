@@ -307,7 +307,16 @@ window.HP.CONFIG = {
     trackingLossGraceSeconds: 2.5,
 
     // --- Lanes -------------------------------------------------------------
-    laneCount: 3,          // fixed at 3 (left / centre / right)
+    // Fixed at 3 (left / centre / right). Genuinely fixed, not just defaulted:
+    // the lane width divisor, the spawn logic and the renderer's centre-lane
+    // index all assume 3. To play without lanes, zero the lane obstacle weight
+    // below rather than changing this.
+    //
+    // Space cost, measured: a lane change is a 14cm torso lean, so the whole
+    // 3-lane range needs 28cm of horizontal travel against roughly 98cm of frame
+    // width at normal standing distance. Lanes are never the framing problem —
+    // vertical fit always is.
+    laneCount: 3,
     laneSwitchPerSec: 4.5, // lanes traversed per second when changing lanes
 
     // --- Jump arc (screen-height fractions) --------------------------------
@@ -321,6 +330,15 @@ window.HP.CONFIG = {
     obstacleDespawnZ: -10,
     obstacleWarnZ: 45,           // audio "obstacle approaching" fires here
     // Relative spawn weights per obstacle kind.
+    //
+    // Setting lane to 0 gives you a de-facto SINGLE-LANE game without touching
+    // code: no barriers spawn, so leaning stops mattering. Worth trying if
+    // leaning turns out to feel unstable — you are on one foot half the time
+    // while running in place, and a 14cm torso shift (that is what leanEnter
+    // 0.30 works out to) is a real balance ask. Try lowering gesture.leanEnter
+    // to ~0.22 first, though; lateral torso work is good variety to keep.
+    //
+    // laneCount itself is NOT parameterisable — see the note there.
     obstacleWeights: { lane: 0.45, low: 0.3, high: 0.25 },
     // Collision half-width of a lane barrier, in lanes: you are hit while your
     // (fractional) lane position is closer than this to the barrier's lane. At
