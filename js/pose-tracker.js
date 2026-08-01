@@ -256,6 +256,7 @@ window.HP = window.HP || {};
       this._prevHipY = null;
       this._prevHipT = null;
       this._hipVel = 0;         // body-scale units/sec, positive = moving UP
+      this._prevMetricT = null; // for the centre drift correction's timestep
       this._lostSince = null;
       this._processedFrames = 0;
       this._fpsWindowStart = util.now();
@@ -750,6 +751,27 @@ window.HP = window.HP || {};
         else this.emit('onCenter', { offset: centerOffset });
       }
 
+      /* --- drift correction on the centre reference ----------------------
+       * Only runs while the player already reads as centred, so it can never
+       * cancel a held lane change. Without this, SIDE-STEPPING accumulates
+       * error until the player sits permanently offset and the game reads it as
+       * a deliberate hold. Leaning does not need it — planted feet re-centre
+       * you for free — but the signal is the same for both, so stepping should
+       * not be the worse option just because of bookkeeping. */
+      if (
+        g.centerDriftPerSec > 0 &&
+        this.baseline.centerX !== null &&
+        this._leanZone === 0 &&
+        Math.abs(centerOffset) < g.leanExit &&
+        this._prevMetricT !== null
+      ) {
+        const dt = clamp(t - this._prevMetricT, 0, 0.25);
+        this.baseline.centerX = util.approach(
+          this.baseline.centerX, centerX, g.centerDriftPerSec, dt
+        );
+      }
+      this._prevMetricT = t;
+
       /* --- Jump ----------------------------------------------------------
        * Must beat this player's own running bounce (threshold derived from the
        * warm-up capture) AND actually end up above neutral hip height. */
@@ -839,6 +861,7 @@ window.HP = window.HP || {};
       this._leanZone = 0;
       this._prevHipY = null;
       this._prevHipT = null;
+      this._prevMetricT = null;
       this._hipVel = 0;
       this.state = this._blankState();
     }

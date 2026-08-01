@@ -9,11 +9,15 @@ No app install, no wearable, no assets to download at runtime, and no video ever
 leaves the device.
 
 ```
-        pace    →  speed        run faster, go faster
-        lean    →  lane         dodge the barriers
-        jump    →  jump         clear the low hurdles
-        crouch  →  slide        duck the high beams
+        pace         →  speed    run faster, go faster
+        step / lean  →  lane     dodge the barriers
+        jump         →  jump     clear the low hurdles
+        crouch       →  slide    duck the high beams
 ```
+
+Lane changes read the sideways offset of your torso, so a **side step and a
+lean both work** — use whichever feels better. It takes about 14cm of travel
+either way.
 
 ---
 

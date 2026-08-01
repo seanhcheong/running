@@ -201,12 +201,40 @@ window.HP.CONFIG = {
    * how far away they stand.
    * ------------------------------------------------------------------------ */
   gesture: {
-    // --- Lean → lane change -------------------------------------------------
-    // Horizontal offset of the shoulder/hip midpoint from the calibrated centre.
-    // 0.30 bs is roughly a deliberate torso lean, not a running wobble.
+    /* --- Sideways movement → lane change ---------------------------------
+     * Measured as the horizontal offset of the shoulder/hip midpoint from the
+     * calibrated centre, in body-scale units.
+     *
+     * ON THE NAMING: these are called "lean" for historical reasons, but the
+     * signal is just torso offset and it does not care HOW you produce it. A
+     * side STEP moves the torso midpoint exactly as a lean does, so both work
+     * and the player can use whichever feels better. 0.30 bs is roughly 14cm of
+     * travel for an adult — small enough to step without leaving frame.
+     *
+     * Stepping is more natural, more athletic, and what players expect from the
+     * genre. Leaning is steadier, since you are on one foot half the time while
+     * running in place, and it does not interrupt the knee-alternation pattern
+     * the way a lateral step briefly can.
+     * -------------------------------------------------------------------- */
     leanEnter: 0.30,   // enter the left/right lane past this offset
     leanExit: 0.17,    // return to centre lane inside this offset (hysteresis)
     leanCooldownMs: 220, // min time between lane-intent changes (debounce)
+
+    /* Slow re-centring of the reference line. This is what makes STEPPING
+     * viable rather than only leaning.
+     *
+     * Lane position is absolute — measured against the centre captured at
+     * calibration. That is self-correcting when you lean, because you always
+     * return to your planted feet. It is NOT self-correcting when you step:
+     * small errors accumulate, and after a few minutes a player can end up
+     * permanently offset and stuck in a lane, with the game reading it as a
+     * deliberate hold.
+     *
+     * So while the player reads as centred, drag the reference centre toward
+     * where they actually are, at this fraction of the remaining error per
+     * second. Deliberately slow, and gated on already being inside the centre
+     * deadzone, so it can never cancel a held lane change. 0 disables it. */
+    centerDriftPerSec: 0.09,
 
     // --- Jump ---------------------------------------------------------------
     // Upward hip velocity, in body-scale units per second. Running in place
