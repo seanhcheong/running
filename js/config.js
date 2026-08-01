@@ -248,6 +248,28 @@ window.HP.CONFIG = {
     jumpRiseMin: 0.045,
     jumpCooldownMs: 550,
 
+    /* How long the velocity AND rise conditions must BOTH hold before a jump
+     * fires, in seconds.
+     *
+     * Jump is the noise-sensitive detector, because it is the only one reading a
+     * DERIVATIVE. Velocity is Δposition/Δt, so a fixed few pixels of keypoint
+     * jitter becomes a velocity spike that grows as Δt shrinks — this gets worse
+     * at higher frame rates, not better. Measured with 8px of Gaussian jitter
+     * while running: 30 false jumps per minute, all from single-frame spikes.
+     * Requiring the condition to persist removed all of them.
+     *
+     * Deliberately a DURATION, not a frame count. A frame count means a
+     * different physical requirement on every device — at 30fps two frames is
+     * 67ms, at 8fps it is 250ms, which is longer than a real jump's whole
+     * upward phase, so slow devices would simply stop registering jumps.
+     *
+     * It also degrades in the right direction: when frames arrive further apart
+     * than this window, a single sample already covers it and fires immediately.
+     * So fast devices — where derivative noise is worst — get the protection,
+     * and slow devices lose the protection rather than losing the jump. 0
+     * disables it. */
+    jumpConfirmSeconds: 0.05,
+
     // --- Duck / slide -------------------------------------------------------
     // Hip drop below the calibrated standing hip height, in body-scale units.
     duckEnter: 0.19,

@@ -252,6 +252,7 @@ window.HP = window.HP || {};
       this._leanZone = 0;
       this._lastLeanChangeMs = 0;
       this._lastJumpMs = 0;
+      this._jumpReadySince = null; // when the jump conditions first held
       this._duckStartMs = 0;
       this._prevHipY = null;
       this._prevHipT = null;
@@ -624,6 +625,14 @@ window.HP = window.HP || {};
       const cfg = this.cfg;
       const s = this.state;
       const nowMs = t * 1000;
+      /* Time since the previous processed frame. Computed ONCE here and used by
+       * everything below, because _prevMetricT is only advanced at the very end
+       * of this method — reading it mid-method after an early update would
+       * silently yield zero. Infinity on the first frame so any
+       * "is the frame interval longer than X" test passes rather than divides. */
+      const frameDt = this._prevMetricT === null
+        ? Infinity
+        : Math.max(0, t - this._prevMetricT);
 
       const ls = map.left_shoulder, rs = map.right_shoulder;
       const lh = map.left_hip, rh = map.right_hip;
@@ -763,24 +772,39 @@ window.HP = window.HP || {};
         this.baseline.centerX !== null &&
         this._leanZone === 0 &&
         Math.abs(centerOffset) < g.leanExit &&
-        this._prevMetricT !== null
+        frameDt !== Infinity
       ) {
-        const dt = clamp(t - this._prevMetricT, 0, 0.25);
         this.baseline.centerX = util.approach(
-          this.baseline.centerX, centerX, g.centerDriftPerSec, dt
+          this.baseline.centerX, centerX, g.centerDriftPerSec,
+          clamp(frameDt, 0, 0.25)
         );
       }
-      this._prevMetricT = t;
 
       /* --- Jump ----------------------------------------------------------
        * Must beat this player's own running bounce (threshold derived from the
        * warm-up capture) AND actually end up above neutral hip height. */
       const jumpThreshold = this.thresholds.jumpVelocity;
-      if (
-        this._hipVel >= jumpThreshold &&
-        -hipOffset >= g.jumpRiseMin &&
-        nowMs - this._lastJumpMs >= g.jumpCooldownMs
-      ) {
+      /* Both conditions must hold for jumpConfirmSeconds, because a single
+       * frame's noise spike can satisfy them simultaneously and velocity noise
+       * grows as the frame interval shrinks.
+       *
+       * The frameDt escape hatch is what keeps this from punishing slow devices:
+       * once frames are further apart than the confirm window, one sample
+       * already spans it, so the jump fires on the first qualifying frame. Fast
+       * devices — where derivative noise is worst — get the protection; slow
+       * ones lose the protection rather than losing the jump. */
+      const jumpReady = this._hipVel >= jumpThreshold && -hipOffset >= g.jumpRiseMin;
+      const confirmWindow = g.jumpConfirmSeconds || 0;
+      if (!jumpReady) {
+        this._jumpReadySince = null;
+      } else if (this._jumpReadySince === null) {
+        this._jumpReadySince = t;
+      }
+      const heldLongEnough = jumpReady && (
+        t - this._jumpReadySince >= confirmWindow || frameDt >= confirmWindow
+      );
+      if (heldLongEnough && nowMs - this._lastJumpMs >= g.jumpCooldownMs) {
+        this._jumpReadySince = null;
         this._lastJumpMs = nowMs;
         s.airborne = true;
         this.emit('onJump', { velocity: this._hipVel, rise: -hipOffset });
@@ -800,6 +824,9 @@ window.HP = window.HP || {};
         this.emit('onDuckEnd', { drop: hipOffset });
       }
 
+      // Advance the frame clock last, so every consumer above saw the real
+      // interval since the previous frame.
+      this._prevMetricT = t;
       this.emit('frame', s);
     }
 
@@ -863,6 +890,7 @@ window.HP = window.HP || {};
       this._prevHipT = null;
       this._prevMetricT = null;
       this._hipVel = 0;
+      this._jumpReadySince = null;
       this.state = this._blankState();
     }
 
