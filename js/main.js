@@ -25,7 +25,8 @@
  *   ?canvas=1   force Phaser's canvas renderer, freeing the second WebGL context
  *               for TF.js (worth trying if a phone thermally throttles)
  *   ?mode=wall  start straight into Wall Mode (see docs/DESIGN-wall-mode.md).
- *               In ?sim=1 the number keys 1-6 stand in for holding a pose.
+ *               In ?sim=1 the number keys stand in for holding a pose — the
+ *               legend on the start screen and in the HUD lists them.
  * ========================================================================== */
 
 window.HP = window.HP || {};
@@ -49,12 +50,20 @@ window.HP = window.HP || {};
   /* Sim-mode stand-in for holding a pose: number keys pick which shape you are
    * "in". Order matters — it is the on-screen key legend too. */
   const SIM_POSE_KEYS = ['stand_tall', 'squat_bottom', 'star', 't_pose',
-                         'knee_up_left', 'knee_up_right'];
+                         'knee_up_left', 'knee_up_right', 'reach_up', 'clap',
+                         'side_bend_left', 'side_bend_right'];
+
+  /** Digit → pose. Keys run 1-9 then 0 for the tenth, the usual convention. */
+  function simPoseFor(key) {
+    if (!/^[0-9]$/.test(key)) return null;
+    const n = key === '0' ? 10 : parseInt(key, 10);
+    return SIM_POSE_KEYS[n - 1] || null;
+  }
 
   /** "1 STAND TALL · 2 SQUAT · …" — built from the list above so the legend can
    *  never drift out of step with the keys that are actually bound. */
   function simPoseLegend(sep) {
-    return SIM_POSE_KEYS.map((id, i) => (i + 1) + ' ' +
+    return SIM_POSE_KEYS.map((id, i) => ((i + 1) % 10) + ' ' +
       (HP.POSES && HP.POSES[id] ? HP.POSES[id].label : id)).join(sep || ' · ');
   }
 
@@ -867,6 +876,18 @@ window.HP = window.HP || {};
    * the same normalised space. Seeing the two figures diverge is what tells the
    * player which limb to move — a bar alone cannot say that.
    */
+  /* One reusable offscreen canvas for the fit meter's ghost. Allocating a fresh
+   * one every frame would churn a 150x150 buffer at 60fps for no reason. */
+  let _ghost = null;
+  function ghostBuffer(w, h) {
+    if (!_ghost) _ghost = document.createElement('canvas');
+    if (_ghost.width !== w || _ghost.height !== h) {
+      _ghost.width = w;
+      _ghost.height = h;
+    }
+    return _ghost;
+  }
+
   function drawFitCanvas(wall) {
     const c = dom.fitCanvas;
     if (!c) return;
@@ -884,8 +905,11 @@ window.HP = window.HP || {};
     const pose = HP.POSES[wall.poseId];
     if (!pose) return;
 
-    const b = HP.poseLib.poseBounds(pose);
-    const pad = 8;
+    /* Frame to the BLOB's extent, not the joints': the body form rises about a
+     * torso above the shoulder line, so framing on joints alone crops the head
+     * off the target the player is being asked to copy. */
+    const b = HP.avatar.blobBounds(pose.target) || HP.poseLib.poseBounds(pose);
+    const pad = 6;
     const sc = Math.min(
       (cw - pad * 2) / Math.max(b.width, 0.2),
       (ch - pad * 2) / Math.max(b.height, 0.2)
@@ -894,18 +918,38 @@ window.HP = window.HP || {};
     const oy = ch / 2 - ((b.minY + b.maxY) / 2) * sc;
     const plot = (bx, by) => ({ x: ox + bx * sc, y: oy + by * sc });
 
-    strokeFigure(ctx, pose.target, plot, 'rgba(255,255,255,0.30)',
-      Math.max(3, sc * 0.14));
+    /* The target: the character's silhouette, ghosted.
+     *
+     * Drawn opaque into an offscreen buffer and composited ONCE, rather than
+     * drawn at 22% directly. The figure is several overlapping shapes — legs
+     * behind the body, arms over it — and overlapping translucent fills
+     * composite, so drawing it directly at 22% produced bright seams wherever
+     * two parts met. The buffer flattens it first, so the ghost is uniform. */
+    const buf = ghostBuffer(Math.round(cw * dpr), Math.round(ch * dpr));
+    const bctx = buf.getContext('2d');
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.clearRect(0, 0, cw, ch);
+    HP.avatar.drawBlob(HP.avatar.canvasOps(bctx), {
+      joints: pose.target, plot: plot, bsPx: sc,
+      silhouette: true, color: 0xffffff, alpha: 1,
+    });
+    ctx.save();
+    ctx.globalAlpha = 0.24;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(buf, 0, 0);
+    ctx.restore();
 
-    // In sim mode there is no skeleton, so show the pose the player selected —
-    // which is honestly what "your current shape" means there.
+    /* Your live pose over the top, as a SKELETON rather than a second blob. Two
+     * overlapping silhouettes are impossible to read apart; a stick figure inside
+     * the target shape says "this limb is outside the shape" at a glance, which
+     * is the one question this widget exists to answer. */
     const live = SIM_MODE
       ? (simPoseId && HP.POSES[simPoseId] ? HP.POSES[simPoseId].target : null)
       : (tracker ? tracker.state.poseNorm : null);
     if (live) {
       strokeFigure(ctx, live, plot,
         wallSim.matched() ? '#3fffb4' : '#ff5c7a',
-        Math.max(2, sc * 0.085), pose.joints);
+        Math.max(2, sc * 0.075), pose.joints);
     }
   }
 
@@ -1189,7 +1233,7 @@ window.HP = window.HP || {};
      * inert once the camera is the thing driving the pose. Silence read as "the
      * keys are broken", so say which it is instead of ignoring the press. */
     if (!SIM_MODE) {
-      if (mode === 'wall' && phase === 'running' && /^[1-9]$/.test(e.key)) {
+      if (mode === 'wall' && phase === 'running' && /^[0-9]$/.test(e.key)) {
         showWallToast('KEYS NEED ?sim=1', 'hit', 1400);
       }
       return;
@@ -1199,7 +1243,7 @@ window.HP = window.HP || {};
      * the wall wants the shape sustained through contact, and the sim should
      * exercise that rather than paper over it. */
     if (mode === 'wall') {
-      const picked = SIM_POSE_KEYS[parseInt(e.key, 10) - 1];
+      const picked = simPoseFor(e.key);
       if (picked) { simPoseId = picked; e.preventDefault(); }
       return;
     }
@@ -1219,7 +1263,7 @@ window.HP = window.HP || {};
   function onKeyUp(e) {
     if (!SIM_MODE) return;
     if (mode === 'wall') {
-      const picked = SIM_POSE_KEYS[parseInt(e.key, 10) - 1];
+      const picked = simPoseFor(e.key);
       if (picked && simPoseId === picked) { simPoseId = null; e.preventDefault(); }
       return;
     }
@@ -1351,8 +1395,7 @@ window.HP = window.HP || {};
         'SIM MODE — no camera.<br>' +
         '<b>RUN:</b> <kbd>↑</kbd>/<kbd>↓</kbd> pace, <kbd>←</kbd><kbd>→</kbd> ' +
         'lane, <kbd>Space</kbd> jump, <kbd>Shift</kbd> duck<br>' +
-        '<b>WALL:</b> hold <kbd>1</kbd>–<kbd>6</kbd> to "be" a pose — ' +
-        simPoseLegend(', ');
+        '<b>WALL:</b> hold a number key to "be" a pose — ' + simPoseLegend(', ');
     }
     setCameraMode('off');
     showScreen('screenStart');

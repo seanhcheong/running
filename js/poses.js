@@ -176,6 +176,99 @@ window.HP = window.HP || {};
         left_knee: [-0.20, 1.00], right_knee: [0.26, 0.16],
       },
     },
+
+    /* ---------------------------------------------------------------------
+     * From the character sheet: "Recovery Upward", "Clap", "Stretching".
+     *
+     * These three were picked off that sheet because they clear both bars a
+     * pose has to clear here — standing, front-facing, and defined above the
+     * knees. The sheet's floor poses (Plank, Mid-Push-Up, Hands-Down Plant)
+     * are NOT here, for a reason that is mechanical rather than aesthetic:
+     * every threshold in this file is divided by the shoulder-mid-to-hip-mid
+     * distance, and when the torso points at the camera that distance collapses
+     * toward zero and the normalisation blows up. Those poses need a different
+     * anchor, not a looser tolerance.
+     * ------------------------------------------------------------------ */
+
+    /* Both arms straight overhead, feet together. Distinct from `star` in both
+     * the arms (vertical, not diagonal) and the legs (together, not spread), so
+     * the two are readable as different silhouettes at a distance. */
+    reach_up: {
+      id: 'reach_up',
+      label: 'REACH UP',
+      facing: 'front',
+      joints: ['left_wrist', 'right_wrist', 'left_elbow', 'right_elbow',
+               'left_shoulder', 'right_shoulder', 'left_knee', 'right_knee'],
+      target: {
+        nose: [0, -1.45],
+        left_shoulder: [-0.40, -1.00], right_shoulder: [0.40, -1.00],
+        left_elbow: [-0.42, -1.56], right_elbow: [0.42, -1.56],
+        left_wrist: [-0.48, -2.06], right_wrist: [0.48, -2.06],
+        left_hip: [-0.18, 0], right_hip: [0.18, 0],
+        left_knee: [-0.16, 1.00], right_knee: [0.16, 1.00],
+      },
+    },
+
+    /* Hands together in front of the chest, elbows out. The riskiest pose in
+     * the library: it differs from stand_tall at the WRISTS, and wrist
+     * confidence is the first thing MoveNet loses with distance. Worst-joint
+     * matching is what makes it viable at all — an averaged error would bury a
+     * two-joint difference under six correct ones. Knees are scored so the pose
+     * cannot be satisfied from a squat, whose wrists land nearby. */
+    clap: {
+      id: 'clap',
+      label: 'CLAP',
+      facing: 'front',
+      joints: ['left_wrist', 'right_wrist', 'left_elbow', 'right_elbow',
+               'left_shoulder', 'right_shoulder', 'left_knee', 'right_knee'],
+      target: {
+        nose: [0, -1.45],
+        left_shoulder: [-0.40, -1.00], right_shoulder: [0.40, -1.00],
+        left_elbow: [-0.52, -0.60], right_elbow: [0.52, -0.60],
+        left_wrist: [-0.07, -0.74], right_wrist: [0.07, -0.74],
+        left_hip: [-0.18, 0], right_hip: [0.18, 0],
+        left_knee: [-0.20, 1.00], right_knee: [0.20, 1.00],
+      },
+    },
+
+    /* Standing side bend: torso leans one way, the opposite arm arcs overhead.
+     * Split left/right for the same reason the knee raises are — alternating
+     * the pair is what turns two positions into a rep (see wall-mode.js).
+     *
+     * Note this pose is the one place the hip-anchored frame flatters us: a side
+     * bend barely moves the hips, so the whole signal lands in the shoulders and
+     * the overhead wrist, which are the two best-tracked things in the frame. */
+    side_bend_left: {
+      id: 'side_bend_left',
+      label: 'BEND LEFT',
+      facing: 'front',
+      joints: ['left_shoulder', 'right_shoulder', 'right_wrist', 'right_elbow',
+               'left_wrist', 'left_knee', 'right_knee'],
+      target: {
+        nose: [-0.46, -1.34],
+        left_shoulder: [-0.72, -0.82], right_shoulder: [0.04, -1.06],
+        left_elbow: [-0.74, -0.42], right_elbow: [0.20, -1.62],
+        left_wrist: [-0.62, 0.00], right_wrist: [-0.26, -1.94],
+        left_hip: [-0.18, 0], right_hip: [0.18, 0],
+        left_knee: [-0.20, 1.00], right_knee: [0.20, 1.00],
+      },
+    },
+
+    side_bend_right: {
+      id: 'side_bend_right',
+      label: 'BEND RIGHT',
+      facing: 'front',
+      joints: ['left_shoulder', 'right_shoulder', 'left_wrist', 'left_elbow',
+               'right_wrist', 'left_knee', 'right_knee'],
+      target: {
+        nose: [0.46, -1.34],
+        left_shoulder: [-0.04, -1.06], right_shoulder: [0.72, -0.82],
+        left_elbow: [-0.20, -1.62], right_elbow: [0.74, -0.42],
+        left_wrist: [0.26, -1.94], right_wrist: [0.62, 0.00],
+        left_hip: [-0.18, 0], right_hip: [0.18, 0],
+        left_knee: [-0.20, 1.00], right_knee: [0.20, 1.00],
+      },
+    },
   };
 
   /* ===========================================================================

@@ -365,6 +365,39 @@ window.HP = window.HP || {};
    * ======================================================================== */
   const PROJ_ZREF = 26;
 
+  /* The run rig builds its joints straight in pixels, so the avatar module needs
+   * no coordinate transform at all. Hoisted rather than rebuilt per frame. */
+  const IDENTITY_PLOT = (x, y) => ({ x: x, y: y });
+
+  /* Crouching shortens the torso, and every avatar proportion is a multiple of
+   * torso length — so left alone a duck would shrink the whole character instead
+   * of squashing it. Widening the multiples holds the mass roughly constant. */
+  /* Ducking shortens the torso, and every avatar proportion is a multiple of
+   * torso length — so left alone a crouch would shrink the character in BOTH
+   * dimensions and read as "moved further away" rather than "got lower". These
+   * multiples are scaled by 30/18 (the normal/ducked torso ratio) to hold the
+   * silhouette's width constant while its height collapses. */
+  const DUCK_METRICS = {
+    crownAbove: 1.15, baseBelow: 0.75, halfWidth: 1.55,
+    legOut: 0, legLength: 0.92,
+  };
+
+  /* The avatar module swings a raised knee outward and shortens legs into stubs,
+   * because a pose CUTOUT has to be readable as a still silhouette. The runner
+   * needs neither: its stride is already animated by the rig below, and applying
+   * the exaggeration on top dragged the lifted foot across the belly instead of
+   * up behind the body, which is the one cue that makes a back view read as
+   * running. */
+  const RUN_METRICS = { legOut: 0, legLength: 0.92 };
+
+  /* Avatar sizing, named because WallScene has to size its cutouts to match the
+   * runner — a cutout that is not the same size as the character you are steering
+   * is a cutout you cannot judge yourself against. Kept here as the single source
+   * of truth rather than copied into wall-mode.js, which is how the two silently
+   * drifted apart by 1.55x the first time. */
+  const AVATAR_DIVISOR = 104;   // laneW / this = the avatar's unit scale
+  const AVATAR_TORSO = 30;      // torso length in those units
+
   const COLORS = {
     skyTop: 0x05060f,
     skyBottom: 0x141033,
@@ -453,6 +486,11 @@ window.HP = window.HP || {};
       const depth = this.groundY - this.horizonY;
       this.roadHalfW = Math.min(w * 0.46, depth * 0.62);
       this.laneW = this.roadHalfW / 1.5; // 3 lanes => lane centres at -1, 0, 1
+    }
+
+    /** Torso length in pixels at the player's own depth. One body-scale unit. */
+    _torsoPx() {
+      return AVATAR_TORSO * (this.laneW / AVATAR_DIVISOR);
     }
 
     /* --- projection ------------------------------------------------------- */
@@ -698,15 +736,29 @@ window.HP = window.HP || {};
      * not a side-on pendulum. Getting that wrong is what makes back-view
      * runners look like they are marching sideways.
      * ------------------------------------------------------------------------ */
+    /* --- the runner -------------------------------------------------------
+     * Drawn by js/avatar.js from a set of joints, the same way the wall cutouts
+     * and the fit meter are, so the thing you control and the thing you are told
+     * to match are visibly the same character. That leaves this method with one
+     * job: turn the run rig — stride, arm swing, bob, lean — into joints.
+     *
+     * The joints are in PIXELS with an identity plot, which the avatar module
+     * supports because all its proportions are multiples of torso length rather
+     * than absolute units.
+     */
     _drawPlayer() {
       const g = this.gPlayer;
       const sim = this.sim;
       g.clear();
 
-      // Avatar size is keyed to lane width so it stays proportional to the road.
-      // The divisor is pure presence: smaller = a bigger runner. Obstacles size
-      // themselves off laneW independently, so this only moves the avatar.
-      const scale = this.laneW / 76;
+      /* Avatar size is keyed to lane width so it stays proportional to the road.
+       * The divisor is pure presence: smaller = a bigger runner. Obstacles size
+       * themselves off laneW independently, so this only moves the avatar.
+       *
+       * It went from 76 to 104 when the humanoid became a blob: the blob is about
+       * twice as wide per unit of torso, and at the old value it filled the road
+       * from edge to edge. */
+      const scale = this.laneW / AVATAR_DIVISOR;
       const x = this._xAt(sim.lane - 1, 0);
       const jumpPx = sim.jumpHeight * this.H;
       const duck = sim.ducking ? 1 : 0;
@@ -716,13 +768,12 @@ window.HP = window.HP || {};
       const bob = sim.airborne ? 0 : Math.sin(this.runPhase * 2) * 1.6 * scale;
       const groundContact = this.groundY - jumpPx + bob;
 
-      const legLen = (32 - duck * 15) * scale;
+      const legLen = (30 - duck * 13) * scale;
       const torsoH = (30 - duck * 12) * scale;
       const hipY = groundContact - legLen;
       const shoulderY = hipY - torsoH;
       const shHalf = 13 * scale;                  // half shoulder width
       const hipHalf = 8.5 * scale;
-      const headR = 8.5 * scale;
 
       // Lean into a lane change: the upper body leads and the feet trail, which
       // is both how running works and a useful hint that a lane change is
@@ -730,10 +781,6 @@ window.HP = window.HP || {};
       const tilt = clamp(sim.targetLane - sim.lane, -1, 1) * 7 * scale;
       const sx = x + tilt;
 
-      const col = duck ? COLORS.playerDuck : COLORS.player;
-      // Limbs sit a shade darker than the torso. Without this the arms vanish
-      // into the body, since everything else here is one flat fill.
-      const limb = duck ? COLORS.playerDuckLimb : COLORS.playerLimb;
       const invuln = sim.t < sim.invulnUntil;
       // Blink while invulnerable so a hit is unmistakable.
       const alpha = invuln ? (Math.floor(sim.t * 14) % 2 ? 0.35 : 1) : 1;
@@ -742,104 +789,76 @@ window.HP = window.HP || {};
       const shadowScale = 1 - clamp(jumpPx / (this.H * 0.2), 0, 0.72);
       g.fillStyle(0x000000, 0.42 * shadowScale);
       g.fillEllipse(x, this.groundY + 3 * scale,
-        30 * scale * shadowScale, 8 * scale * shadowScale);
+        36 * scale * shadowScale, 9 * scale * shadowScale);
 
-      /* --- legs, drawn first so the torso overlaps them at the hip --------
-       * The iconic back-view running cue is the trailing leg FOLDING: knee stays
-       * around mid-thigh height while the heel comes up near the glute, sole
-       * toward the camera. Merely shortening the leg (which is what a naive
-       * foreshortening gives you) reads as marching on the spot.
+      const joints = {
+        nose: [sx + tilt * 0.25, shoulderY - 0.45 * torsoH],
+        left_shoulder: [sx - shHalf, shoulderY],
+        right_shoulder: [sx + shHalf, shoulderY],
+        left_hip: [x - hipHalf, hipY],
+        right_hip: [x + hipHalf, hipY],
+      };
+
+      /* --- the stride -------------------------------------------------------
+       * The back-view running cue is the trailing leg FOLDING: the foot comes up
+       * toward the glute with the sole toward the camera. Merely shortening the
+       * leg (which is what naive foreshortening gives you) reads as marching on
+       * the spot.
        *
        * lift is deliberately not a plain sine. Two antiphase sines cross zero at
        * the same instant, so both legs sit neutral for a wide window and the
        * figure looks like it is standing. The fractional power makes each leg
        * commit to up-or-down quickly and narrows that window. */
+      const soles = [];
       for (let i = 0; i < 2; i++) {
         const side = i ? 1 : -1;
+        const name = i ? 'right' : 'left';
         const sw = Math.sin(this.runPhase + (i ? Math.PI : 0));
         const lift = sw > 0 ? Math.pow(sw, 0.55) : 0;     // 0..1, heel rising
-        const hx = x + side * hipHalf * 1.15;             // wider than the legs are thick
-
-        // Knee drops slightly and flares outward as the leg folds; the foot
-        // comes up to meet it from behind.
-        const kneeX = hx + side * (1.5 + lift * 3) * scale;
-        const kneeY = hipY + legLen * (0.55 + lift * 0.06);
-        const fx = hx + side * (2.5 + lift * 2) * scale;
-        const fy = groundContact - lift * legLen * 0.78;
-
-        g.lineStyle(Math.max(2, 6.2 * scale), limb, alpha);
-        g.beginPath();
-        g.moveTo(hx, hipY);
-        g.lineTo(kneeX, kneeY);
-        g.lineTo(fx, fy);
-        g.strokePath();
-        // Round the knee: Graphics has no line caps, and a bare mitre joint
-        // reads as a broken limb at this size.
-        g.fillStyle(limb, alpha);
-        g.fillCircle(kneeX, kneeY, 3.2 * scale);
-
-        // The sole of the shoe, facing us once the foot is up behind.
-        if (lift > 0.25) {
-          g.fillStyle(COLORS.playerSole, alpha * clamp((lift - 0.25) / 0.35, 0, 1));
-          g.fillEllipse(fx, fy, 9.5 * scale, 4.6 * scale);
+        // The blob's legs are stubs off one rounded base, so the knee joint IS
+        // the foot — the fold shows as the stub swinging up and outward.
+        const fx = x + side * (hipHalf * 0.78 + (1.5 + lift * 4) * scale);
+        const fy = groundContact - lift * legLen * 0.72;
+        joints[name + '_knee'] = [fx, fy];
+        if (lift > 0.28) {
+          soles.push({ x: fx, y: fy, a: clamp((lift - 0.28) / 0.35, 0, 1) });
         }
       }
-
-      /* --- torso: a tapered back, wider at the shoulders ------------------ */
-      g.fillStyle(col, alpha);
-      g.beginPath();
-      g.moveTo(sx - shHalf, shoulderY);
-      g.lineTo(sx + shHalf, shoulderY);
-      g.lineTo(x + hipHalf, hipY);
-      g.lineTo(x - hipHalf, hipY);
-      g.closePath();
-      g.fillPath();
-
-      /* --- backpack: the cue that makes the whole thing read as a back ---- */
-      const packW = shHalf * 1.3;
-      const packH = torsoH * 0.66;
-      g.fillStyle(COLORS.playerPack, alpha);
-      g.fillRoundedRect(sx - packW / 2, shoulderY + torsoH * 0.14,
-        packW, packH, 3 * scale);
-      // Straps over the shoulders, so it hangs off the body rather than floating.
-      g.fillStyle(COLORS.playerPack, alpha * 0.8);
-      [-1, 1].forEach((s) => {
-        g.fillRect(sx + s * shHalf * 0.62 - 1.2 * scale, shoulderY,
-          2.4 * scale, torsoH * 0.3);
-      });
 
       /* --- arms: swing in antiphase to the same-side leg ------------------ */
       for (let i = 0; i < 2; i++) {
         const side = i ? 1 : -1;
+        const name = i ? 'right' : 'left';
         const aw = Math.sin(this.runPhase + (i ? 0 : Math.PI));
-        const ax = sx + side * shHalf * 0.92;
+        const ax = sx + side * shHalf * 0.9;
         const ay = shoulderY + 2.5 * scale;
-        const ex = ax + side * (4 + 1.5 * aw) * scale;
-        const ey = ay + (10 - aw * 2.5) * scale;
-        // On the forward swing the hand vanishes in front of the body; on the
-        // back swing it reappears beside the hip.
-        const hx2 = ex + side * 1.5 * scale;
-        const hy2 = ey + (5 + aw * 5) * scale;
-        g.lineStyle(Math.max(1.5, 5 * scale), limb, alpha);
-        g.beginPath();
-        g.moveTo(ax, ay);
-        g.lineTo(ex, ey);
-        g.lineTo(hx2, hy2);
-        g.strokePath();
-        g.fillStyle(limb, alpha);
-        g.fillCircle(ex, ey, 2.6 * scale);
+        joints[name + '_elbow'] = [ax + side * (4.5 + 1.5 * aw) * scale,
+                                   ay + (11 - aw * 3) * scale];
+        joints[name + '_wrist'] = [ax + side * (6 + 2 * aw) * scale,
+                                   ay + (19 + aw * 5) * scale];
       }
 
-      /* --- head: no face, cap crown on top -------------------------------
-       * A flat disc across the top of the skull, not a half-sphere: a cap seen
-       * from behind shows crown only, with no brim, which is itself a cue that
-       * we are looking at the back of someone's head. */
-      const hcx = sx + tilt * 0.25;
-      const hcy = shoulderY - headR - 1.5 * scale;
-      g.fillStyle(col, alpha);
-      g.fillCircle(hcx, hcy, headR);
-      g.fillStyle(COLORS.playerCap, alpha);
-      g.fillEllipse(hcx, hcy - headR * 0.46, headR * 1.82, headR * 0.86);
+      HP.avatar.drawBlob(HP.avatar.phaserOps(g), {
+        joints: joints,
+        plot: IDENTITY_PLOT,
+        bsPx: 1,                 // joints are already in pixels
+        skin: duck ? 'duck' : 'normal',
+        alpha: alpha,
+        // No face: this is a back view, and an absent face is the cue that says
+        // so. Nothing else in the silhouette distinguishes front from back.
+        face: false,
+        // Ducking shortens the torso, which would otherwise shrink the whole
+        // character rather than squashing it. Widening the torso multiples keeps
+        // the mass constant and reads as a crouch.
+        metrics: duck ? DUCK_METRICS : RUN_METRICS,
+      });
+
+      /* The sole of the foot, facing us once it is up behind. Drawn after the
+       * body so it is not swallowed by it. */
+      soles.forEach((s) => {
+        g.fillStyle(COLORS.playerSole, alpha * s.a);
+        g.fillEllipse(s.x, s.y, 11 * scale, 5.5 * scale);
+      });
     }
 
     /* --- the consuming void ---------------------------------------------- */

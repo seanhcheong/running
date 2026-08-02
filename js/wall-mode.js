@@ -80,6 +80,13 @@ window.HP = window.HP || {};
       'knee_up_left', 'knee_up_right', 'knee_up_left', 'knee_up_right',
       // A held squat — thick wall, so this one is time under tension.
       { pose: 'squat_bottom', thickness: 8 }, 'stand_tall',
+      // Reach-and-clap: the upper-body pair. Both are arms-only, so they give
+      // the legs a rest without letting the wall spacing drop.
+      'reach_up', 'clap', 'reach_up', 'clap',
+      // Side bends, alternating, as the cool-down. Held (thick walls) because a
+      // stretch that is snapped into and straight back out of is not a stretch.
+      { pose: 'side_bend_left', thickness: 7 }, 'stand_tall',
+      { pose: 'side_bend_right', thickness: 7 }, 'stand_tall',
     ],
   };
 
@@ -329,27 +336,42 @@ window.HP = window.HP || {};
    * Used for both the wall cutout and the fit meter, so a shape looks identical
    * wherever the player sees it. `plot` maps body-scale units to pixels.
    * ======================================================================== */
+  /**
+   * The cutout in the wall: the character's own silhouette in the pose you have
+   * to hit.
+   *
+   * This was a stick figure, and a stick figure is the wrong shape for the job —
+   * a wall is first visible at the far end of the road, where a limb two pixels
+   * wide is a single pixel column and the pose is unreadable until far too late.
+   * A blob silhouette has AREA, so it survives being small, and it is the same
+   * character the player is looking at on the road.
+   *
+   * `inflate` widens every proportion for the outer glow pass, so the two passes
+   * are the same shape rather than a shape plus a halo that does not match it.
+   */
   function drawPoseFigure(g, pose, plot, bsPx, opts) {
     const o = opts || {};
-    const t = pose.target;
-    const lw = Math.max(o.minWidth || 2, (o.widthBs || 0.16) * bsPx);
-    g.lineStyle(lw, o.color, o.alpha === undefined ? 1 : o.alpha);
-    for (let i = 0; i < HP.POSE_BONES.length; i++) {
-      const a = t[HP.POSE_BONES[i][0]];
-      const b = t[HP.POSE_BONES[i][1]];
-      if (!a || !b) continue;
-      const pa = plot(a[0], a[1]);
-      const pb = plot(b[0], b[1]);
-      g.beginPath();
-      g.moveTo(pa.x, pa.y);
-      g.lineTo(pb.x, pb.y);
-      g.strokePath();
-    }
-    if (t.nose) {
-      const head = plot(t.nose[0], t.nose[1]);
-      g.fillStyle(o.color, o.alpha === undefined ? 1 : o.alpha);
-      g.fillCircle(head.x, head.y, Math.max(2, 0.26 * bsPx));
-    }
+    const inflate = o.inflate || 0;
+    const metrics = inflate
+      ? {
+          halfWidth: HP.avatar.METRICS.halfWidth + inflate,
+          crownAbove: HP.avatar.METRICS.crownAbove + inflate,
+          baseBelow: HP.avatar.METRICS.baseBelow + inflate,
+          armRoot: HP.avatar.METRICS.armRoot + inflate,
+          armTip: HP.avatar.METRICS.armTip + inflate,
+          legRoot: HP.avatar.METRICS.legRoot + inflate,
+          legTip: HP.avatar.METRICS.legTip + inflate,
+        }
+      : null;
+    HP.avatar.drawBlob(HP.avatar.phaserOps(g), {
+      joints: pose.target,
+      plot: plot,
+      bsPx: bsPx,
+      silhouette: true,
+      color: o.color,
+      alpha: o.alpha === undefined ? 1 : o.alpha,
+      metrics: metrics,
+    });
   }
 
   /* ===========================================================================
@@ -414,10 +436,14 @@ window.HP = window.HP || {};
       this._drawFx();
     }
 
-    /** One body-scale unit in pixels, at depth scale s. Tied to the avatar's own
-     *  torso so a cutout reads as the same size as the runner. */
+    /** One body-scale unit in pixels, at depth scale s.
+     *
+     *  Delegated to RunScene._torsoPx() rather than hardcoded, because a cutout
+     *  has to be the same size as the character being steered into it. It was
+     *  hardcoded, and when the avatar was resized the two drifted 1.55x apart
+     *  while the comment here still claimed they matched. */
     _bsPx(s) {
-      return 34 * (this.laneW / 76) * s;
+      return this._torsoPx() * s;
     }
 
     _drawWalls() {
@@ -474,14 +500,12 @@ window.HP = window.HP || {};
           else color = WALL_COLORS.miss;
         }
 
-        // A dim wide pass first so the shape reads as a glowing hole rather than
-        // a line drawing.
+        // A dim inflated pass first, so the shape reads as a glowing hole rather
+        // than a flat sticker on the panel.
         drawPoseFigure(g, pose, plot, bsPx, {
-          color: color, alpha: alpha * 0.28, widthBs: 0.42, minWidth: 5,
+          color: color, alpha: alpha * 0.30, inflate: 0.14,
         });
-        drawPoseFigure(g, pose, plot, bsPx, {
-          color: color, alpha: alpha, widthBs: 0.15, minWidth: 2,
-        });
+        drawPoseFigure(g, pose, plot, bsPx, { color: color, alpha: alpha });
 
         /* --- hold progress, drawn on the wall while passing through -------- */
         if (w.state === 'contact' && w.required > 0) {
