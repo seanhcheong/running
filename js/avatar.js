@@ -470,6 +470,10 @@ window.HP = window.HP || {};
    *   face        draw eyes and mouth (front view only)
    *   silhouette  flat single-colour form, no shading or face (wall cutouts)
    *   color       overrides every colour when silhouette is set
+   *   rimColor    silhouette only: stroke the form in this instead of `color`,
+   *               which is what turns a filled shape into a HOLE with a glowing
+   *               edge (see the holographic gate reference)
+   *   rimWidth    rim stroke width in pixels; defaults to 5% of a torso
    *   metrics     partial METRICS override (e.g. a squashed duck)
    */
   function drawBlob(ops, o) {
@@ -498,6 +502,9 @@ window.HP = window.HP || {};
     const solid = o.silhouette ? (o.color === undefined ? skin.body : o.color) : null;
     const cBody = solid === null ? skin.body : solid;
     const cShade = solid === null ? skin.shade : solid;
+    /* A rim turns the silhouette inside out: the fill becomes the hole and the
+     * stroke becomes the glowing edge around it. */
+    const hasRim = o.silhouette && o.rimColor !== undefined;
 
     const mapAll = (arr) => arr.map((p) => plot(p.x, p.y));
 
@@ -544,12 +551,17 @@ window.HP = window.HP || {};
      * so a limb drawn OVER the torso would be perfectly invisible — and three of
      * the ten poses are defined by exactly such a limb. A dark groove reads as an
      * internal edge on any cutout colour, which is what a stencil needs. */
-    const seamColor = o.silhouette ? 0x000000 : cShade;
-    const seamAlpha = o.silhouette ? alpha * 0.55 : alpha;
+    const seamColor = hasRim ? o.rimColor : (o.silhouette ? 0x000000 : cShade);
+    const seamAlpha = hasRim ? alpha : (o.silhouette ? alpha * 0.55 : alpha);
+    const rimW = o.rimWidth === undefined ? Math.max(1.5, px(0.05)) : o.rimWidth;
     const paintLimb = (shape, withSeam) => {
       if (!shape) return;
       const poly = mapAll(shape.poly);
-      if (withSeam && seam > 0.4) ops.strokePoly(poly, seamColor, seamAlpha, seam * 2);
+      /* With a rim, EVERY limb is stroked — a limb behind the body still needs
+       * its own edge, because the hole it belongs to is a single dark void and
+       * the outline is the only thing describing its shape. */
+      if (hasRim) ops.strokePoly(poly, o.rimColor, alpha, rimW);
+      else if (withSeam && seam > 0.4) ops.strokePoly(poly, seamColor, seamAlpha, seam * 2);
       ops.poly(poly, cBody, alpha);
     };
 
@@ -590,7 +602,8 @@ window.HP = window.HP || {};
     if (o.silhouette) {
       // A rim on the cutout is what makes it legible against the wall panel
       // behind it, which is the entire job of a cutout.
-      ops.strokePoly(outlinePx, cBody, alpha, Math.max(1.5, px(0.05)));
+      const rw = o.rimWidth === undefined ? Math.max(1.5, px(0.05)) : o.rimWidth;
+      ops.strokePoly(outlinePx, hasRim ? o.rimColor : cBody, alpha, rw);
     } else {
       /* Two soft patches of shading rather than a gradient: enough to make the
        * form read as round, cheap enough to redraw every frame. Placed along the

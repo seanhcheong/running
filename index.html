@@ -136,6 +136,12 @@
   <!-- ------------------------------------------------------------- START -->
   <section class="screen" id="screenStart">
     <div class="panel">
+      <!-- The character, from resources/Teal_blob_character_fitness_poses_*.jpeg
+           via tools/extract-sprites.js. Decorative, so it carries no alt text —
+           and main.js drops it if the sprite is missing, because the game must
+           still start with no assets present at all. -->
+      <img id="heroBlob" class="hero-blob" src="assets/sprites/standing.png"
+           alt="" width="219" height="256">
       <h1 class="logo">Huff<span>&amp;</span>Puff</h1>
       <p class="tagline">Run in place. Outrun the void.</p>
 

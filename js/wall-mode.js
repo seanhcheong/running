@@ -380,6 +380,8 @@ window.HP = window.HP || {};
    * ======================================================================== */
   const WALL_COLORS = {
     frame: 0x8fe9ff,
+    glass: 0xbdf3ff,      // lit glass sheet; see the holographic gate reference
+    hole: 0x03040a,       // the void through the panel — darker than the sky
     panel: 0x123048,
     far: 0x6d7f9a,        // too far away to be judged yet
     miss: 0xff2b57,
@@ -465,23 +467,32 @@ window.HP = window.HP || {};
         const bsPx = this._bsPx(s);
         const alpha = clamp(s * 3.2, 0.12, 1);
 
-        /* --- the panel: a frame spanning the road ------------------------- */
+        /* --- the panel ----------------------------------------------------
+         * Modelled on resources/Holographic_wall_gates_*.jpeg: a sheet of lit
+         * glass with a rounded top and a hot neon rim, not the wireframe box
+         * this used to draw. Three passes — bloom, glass, rim — because the
+         * bloom is what makes it read as emitting light rather than as a
+         * translucent rectangle. */
         const halfW = this.roadHalfW * s * 1.06;
         const height = this.cfg.wall.wallHeightBs * bsPx;
         const top = yBase - height;
+        const radius = Math.min(halfW * 0.55, height * 0.30);
+        const rimW = Math.max(1.5, 3.4 * s);
 
-        g.fillStyle(WALL_COLORS.panel, alpha * 0.62);
-        g.fillRect(this.cx - halfW, top, halfW * 2, height);
-        // Two strokes: a soft outer halo and a hard inner edge. A single thin
-        // stroke reads as a wireframe box rather than something you would hit.
-        g.lineStyle(Math.max(3, 9 * s), WALL_COLORS.frame, alpha * 0.20);
-        g.strokeRect(this.cx - halfW, top, halfW * 2, height);
-        g.lineStyle(Math.max(1.5, 3 * s), WALL_COLORS.frame, alpha * 0.95);
-        g.strokeRect(this.cx - halfW, top, halfW * 2, height);
-        // Bright sill along the base, so the wall reads as standing on the road.
+        // Outer bloom: a few concentric soft strokes. Phaser has no blur, and
+        // stacking translucent strokes is a cheap, stable stand-in.
+        for (let b = 3; b >= 1; b--) {
+          g.lineStyle(rimW + b * Math.max(2, 7 * s), WALL_COLORS.frame,
+            alpha * 0.05 * b);
+          g.strokeRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
+        }
+        g.fillStyle(WALL_COLORS.glass, alpha * 0.17);
+        g.fillRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
+        g.lineStyle(rimW, WALL_COLORS.frame, alpha * 0.95);
+        g.strokeRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
+        // Bright sill, so the gate reads as standing on the road.
         g.fillStyle(WALL_COLORS.frame, alpha * 0.55);
-        g.fillRect(this.cx - halfW, yBase - Math.max(1.5, 3 * s), halfW * 2,
-          Math.max(1.5, 3 * s));
+        g.fillRect(this.cx - halfW, yBase - rimW, halfW * 2, rimW);
 
         /* --- the cutout --------------------------------------------------- */
         // Hip line placed so the knees (target y ~ +1.0) land near the ground.
@@ -500,12 +511,29 @@ window.HP = window.HP || {};
           else color = WALL_COLORS.miss;
         }
 
-        // A dim inflated pass first, so the shape reads as a glowing hole rather
-        // than a flat sticker on the panel.
+        /* The cutout is a HOLE, per the reference: a void through the panel with
+         * a glowing edge, rather than a coloured sticker on it. That inverts
+         * where the fit feedback lives — the RIM now carries the grey/amber/green
+         * signal, which is why it is stroked in `color` while the fill stays
+         * dark. It also fixes a compositing problem for free: the void is opaque,
+         * so the body and limb shapes can no longer stack alpha against each
+         * other on a part-faded distant wall. */
         drawPoseFigure(g, pose, plot, bsPx, {
-          color: color, alpha: alpha * 0.30, inflate: 0.14,
+          /* This inflated pass is the fit signal's main carrier now that the
+           * cutout itself is a dark void: it reads as coloured light spilling
+           * out around the hole. The thin rim alone is too little colour to
+           * judge at a glance. */
+          color: color, alpha: alpha * 0.34, inflate: 0.13,
         });
-        drawPoseFigure(g, pose, plot, bsPx, { color: color, alpha: alpha });
+        drawPoseFigure(g, pose, plot, bsPx, {
+          color: WALL_COLORS.hole,
+          rimColor: color,
+          /* Deliberately thin. An arm is ~0.25 torsos across, so a rim of half
+           * that on each side leaves no void between them and a near gate's
+           * arms-out cutout collapses into a solid bar. */
+          rimWidth: Math.max(1.0, 1.7 * s),
+          alpha: 1,
+        });
 
         /* --- hold progress, drawn on the wall while passing through -------- */
         if (w.state === 'contact' && w.required > 0) {

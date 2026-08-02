@@ -115,6 +115,7 @@ window.HP = window.HP || {};
     btnStart: el('btnStart'),
     btnStartWall: el('btnStartWall'),
     simNote: el('simNote'),
+    heroBlob: el('heroBlob'),
 
     screenCalib: el('screenCalib'),
     calibPanel: util.$('.calib-panel'),
@@ -1379,6 +1380,21 @@ window.HP = window.HP || {};
     // The pace meter's target line sits at paceRatio 1.0 — "your comfortable
     // pace" — on a bar that runs to maxRatio. Keep the two in sync from config.
     dom.paceTarget.style.left = (100 / CONFIG.pace.maxRatio).toFixed(2) + '%';
+
+    /* The start-screen character is the one thing in this game loaded from a
+     * file. Everything else is drawn from primitives, and that property is worth
+     * keeping: if the sprite is missing the game must still boot, not show a
+     * broken-image placeholder above the logo. */
+    if (dom.heroBlob) {
+      const dropHero = () => { if (dom.heroBlob) dom.heroBlob.remove(); };
+      dom.heroBlob.addEventListener('error', dropHero);
+      /* An `error` listener alone is not enough and the difference is visible: a
+       * 404 on a tiny local file resolves long before DOMContentLoaded fires, so
+       * the event has already been dispatched by the time this runs and the
+       * broken-image placeholder stays on screen above the logo. `complete` with
+       * a zero natural width is how you detect a load that already failed. */
+      if (dom.heroBlob.complete && dom.heroBlob.naturalWidth === 0) dropHero();
+    }
 
     dom.btnMute.classList.add('active');
     setDebug(debugOn);
