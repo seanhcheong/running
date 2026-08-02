@@ -1,0 +1,505 @@
+/* =============================================================================
+ * Huff&Puff — WALL MODE
+ * =============================================================================
+ * Auto-scrolling mode. The player does not run in place: the world moves at a
+ * speed the level sets, walls with pose-shaped cutouts approach, and the player
+ * must be in that shape as each wall passes through them.
+ *
+ * See docs/DESIGN-wall-mode.md for the reasoning. The two things worth knowing
+ * before reading the code:
+ *
+ * ONE WALL IS ONE POSITION, NOT ONE REP.
+ *   A wall can only ever answer "are you in this shape right now?" — it cannot
+ *   see movement. So a rep is built from a SEQUENCE of walls: plank, then
+ *   bottom, then plank is one push-up. Alternation enforces itself, because you
+ *   cannot pass the plank wall from the bottom position. That is why there is no
+ *   rep-counting code anywhere in this file.
+ *
+ * THICKNESS IS TIME UNDER TENSION.
+ *   contactDuration = thickness / speed, so a thin wall is a snap into position
+ *   and a thick wall is a hold. An isometric — plank, wall sit — is just a very
+ *   long wall, needing no special handling.
+ *
+ * WallSim is deliberately free of pose code, exactly like GameSim. It consumes
+ * ONE number, signals.poseError, and derives everything else. That is what keeps
+ * ?sim=1 keyboard testing possible.
+ * ========================================================================== */
+
+window.HP = window.HP || {};
+
+(function (HP) {
+  'use strict';
+
+  const util = HP.util;
+  const clamp = util.clamp;
+
+  /* ===========================================================================
+   * Level authoring
+   * ---------------------------------------------------------------------------
+   * `atZ` is the distance travelled at which the wall reaches the player, so
+   * spacing between walls is what sets rep tempo. Levels will move to data; this
+   * helper exists so the starter level reads as a workout rather than a table of
+   * magic numbers.
+   * ======================================================================== */
+  function buildLevel(spec, cfg) {
+    const walls = [];
+    let z = spec.startAt === undefined ? 45 : spec.startAt;
+    spec.sequence.forEach((entry) => {
+      const poseId = typeof entry === 'string' ? entry : entry.pose;
+      const gap = (typeof entry === 'object' && entry.gap) || spec.gap || 20;
+      const thickness = (typeof entry === 'object' && entry.thickness) ||
+        spec.thickness || cfg.defaultThickness;
+      walls.push({ poseId: poseId, atZ: z, thickness: thickness });
+      z += gap;
+    });
+    return {
+      id: spec.id,
+      facing: spec.facing || 'front',
+      speed: spec.speed || cfg.speed,
+      walls: walls,
+    };
+  }
+
+  /**
+   * The starter level. Alternates so that every demanded pose has to be entered
+   * from a different one — squat/stand pairs are squats, knee-up left/right pairs
+   * are marching, star/stand pairs are jumping jacks.
+   */
+  const STARTER_SPEC = {
+    id: 'starter',
+    gap: 22,
+    sequence: [
+      // Ease in: two big, unmistakable shapes.
+      't_pose', 'stand_tall',
+      // Squats.
+      'squat_bottom', 'stand_tall', 'squat_bottom', 'stand_tall',
+      // Jacks. Thin walls: these are snap-into-position, not holds.
+      { pose: 'star', thickness: 2 }, { pose: 'stand_tall', thickness: 2 },
+      { pose: 'star', thickness: 2 }, { pose: 'stand_tall', thickness: 2 },
+      // Marching.
+      'knee_up_left', 'knee_up_right', 'knee_up_left', 'knee_up_right',
+      // A held squat — thick wall, so this one is time under tension.
+      { pose: 'squat_bottom', thickness: 8 }, 'stand_tall',
+    ],
+  };
+
+  /* ===========================================================================
+   * WallSim
+   * ======================================================================== */
+  class WallSim extends util.Emitter {
+    constructor(config) {
+      super();
+      this.cfg = config || HP.CONFIG;
+      this._wallId = 0;
+      this.reset();
+    }
+
+    reset(level) {
+      const w = this.cfg.wall;
+      this.level = level || buildLevel(STARTER_SPEC, w);
+      this.status = 'idle';           // idle | running | over | complete
+      this.endReason = null;
+      this.t = 0;
+      this.distance = 0;
+      this.speed = this.level.speed;
+
+      this.health = w.startingHealth;
+      this.score = 0;
+      this.combo = 1;
+      this.passed = 0;
+      this.missed = 0;
+      this.transitions = 0;           // pose changes between passed walls
+      this._lastPassedPose = null;
+
+      this.walls = [];
+      this.nextWallIndex = 0;
+      this.invulnUntil = 0;
+
+      /* The ONLY crossing point from pose code, mirroring GameSim.signals.
+       * poseError is the worst-joint distance to the ACTIVE wall's pose, in
+       * body-scale units; Infinity means "cannot tell", never "far away". */
+      this.signals = {
+        poseError: Infinity,
+        tracked: false,
+        // Read by the shared renderer for its speed streaks; wall mode has no
+        // pace, so it stays at zero.
+        paceRatio: 0,
+        cadence: 0,
+      };
+
+      /* --- renderer compatibility ------------------------------------------
+       * RunScene's drawing helpers are reused wholesale (sky, road, runner, fx)
+       * rather than duplicated, so WallSim exposes the handful of fields those
+       * helpers read. These are NOT wall-mode mechanics — they are here so one
+       * renderer serves both modes. */
+      this.lane = 1;
+      this.targetLane = 1;
+      this.jumpHeight = 0;
+      this.airborne = false;
+      this.ducking = false;
+      this.obstacles = [];
+      this.gap = 9999;                // no void in this mode
+      this.grace = 1;
+    }
+
+    start() {
+      this.status = 'running';
+      this.emit('start', {});
+    }
+
+    /** Red vignette intensity: rises as health falls. */
+    dangerLevel() {
+      const max = this.cfg.wall.startingHealth;
+      return clamp(1 - this.health / max, 0, 1);
+    }
+
+    toleranceFor(poseId) {
+      const pose = HP.POSES[poseId];
+      return (pose && pose.tolerance) || this.cfg.wall.defaultTolerance;
+    }
+
+    /** The wall the player should currently be reacting to, or null. */
+    activeWall() {
+      for (let i = 0; i < this.walls.length; i++) {
+        const w = this.walls[i];
+        if (w.state === 'armed' || w.state === 'contact') return w;
+      }
+      return null;
+    }
+
+    /**
+     * 0..1 how close the player is to the active wall's pose, for the fit meter.
+     * Mapped over 0..(tolerance x fitRangeMultiple) so the MATCH threshold lands
+     * at a fixed fraction of the bar and can be marked, exactly like the pace
+     * meter's target line.
+     */
+    fit() {
+      const w = this.activeWall();
+      if (!w) return 0;
+      const err = this.signals.poseError;
+      if (!isFinite(err)) return 0;
+      const range = this.fitRangeFor(w.poseId);
+      return clamp(1 - err / range, 0, 1);
+    }
+
+    fitRangeFor(poseId) {
+      return this.toleranceFor(poseId) * this.cfg.wall.fitRangeMultiple;
+    }
+
+    /** Where on the fit bar the match threshold sits, 0..1. */
+    fitThreshold() {
+      return 1 - 1 / this.cfg.wall.fitRangeMultiple;
+    }
+
+    matched() {
+      const w = this.activeWall();
+      if (!w) return false;
+      return this.signals.poseError < this.toleranceFor(w.poseId);
+    }
+
+    update(dtRaw) {
+      if (this.status !== 'running') return;
+      const cfg = this.cfg.wall;
+      const dt = clamp(dtRaw, 0, this.cfg.game.maxTimestep);
+      if (dt <= 0) return;
+
+      this.t += dt;
+      this.distance += this.speed * dt;
+
+      /* --- spawn ---------------------------------------------------------- */
+      while (
+        this.nextWallIndex < this.level.walls.length &&
+        this.level.walls[this.nextWallIndex].atZ - this.distance <= cfg.spawnZ
+      ) {
+        const spec = this.level.walls[this.nextWallIndex++];
+        const contactDuration = spec.thickness / this.speed;
+        this.walls.push({
+          id: ++this._wallId,
+          poseId: spec.poseId,
+          atZ: spec.atZ,
+          thickness: spec.thickness,
+          z: spec.atZ - this.distance,
+          state: 'approach',
+          held: 0,
+          contactDuration: contactDuration,
+          required: contactDuration * cfg.minHeldFraction,
+          result: null,
+        });
+        this.emit('wallSpawn', { poseId: spec.poseId });
+      }
+
+      /* --- advance + resolve ---------------------------------------------- */
+      const armZ = this.speed * cfg.armSeconds;
+      for (let i = this.walls.length - 1; i >= 0; i--) {
+        const w = this.walls[i];
+        w.z = w.atZ - this.distance;
+        const halfT = w.thickness / 2;
+
+        if (w.state !== 'done') {
+          if (w.z > armZ) {
+            w.state = 'approach';
+          } else if (w.z > halfT) {
+            if (w.state !== 'armed') {
+              w.state = 'armed';
+              this.emit('wallArmed', { wall: w, poseId: w.poseId });
+            }
+          } else if (w.z >= -halfT) {
+            if (w.state !== 'contact') {
+              w.state = 'contact';
+              this.emit('wallContact', { wall: w });
+            }
+            // Accumulated hold, not an instant check.
+            if (this.signals.poseError < this.toleranceFor(w.poseId)) w.held += dt;
+          } else {
+            this._resolve(w);
+          }
+        }
+
+        if (w.z < cfg.despawnZ) this.walls.splice(i, 1);
+      }
+
+      /* --- level complete -------------------------------------------------- */
+      if (
+        this.nextWallIndex >= this.level.walls.length &&
+        this.walls.length === 0 &&
+        this.status === 'running'
+      ) {
+        this.status = 'complete';
+        this.endReason = 'complete';
+        this.emit('complete', this.summary());
+      }
+    }
+
+    _resolve(w) {
+      const cfg = this.cfg.wall;
+      w.state = 'done';
+      const pass = w.held >= w.required;
+      w.result = pass ? 'pass' : 'miss';
+
+      if (pass) {
+        this.passed++;
+        this.score += cfg.scorePerWall * this.combo;
+        this.combo = Math.min(this.combo + 1, cfg.comboMax);
+        // A rep is a change of position between passed walls, which is why
+        // nothing here counts reps directly.
+        if (this._lastPassedPose && this._lastPassedPose !== w.poseId) {
+          this.transitions++;
+        }
+        this._lastPassedPose = w.poseId;
+        this.emit('wallPassed', { wall: w, combo: this.combo, score: this.score });
+      } else {
+        this.missed++;
+        this.combo = 1;
+        if (this.t >= this.invulnUntil) {
+          this.health--;
+          this.invulnUntil = this.t + cfg.missInvulnSeconds;
+        }
+        this.emit('wallMissed', { wall: w, health: this.health });
+        if (this.health <= 0) {
+          this.status = 'over';
+          this.endReason = 'crushed';
+          this.emit('gameover', this.summary());
+        }
+      }
+    }
+
+    /** Two positions make one rep, so reps are transitions halved. */
+    reps() {
+      return Math.floor(this.transitions / 2);
+    }
+
+    summary() {
+      return {
+        reason: this.endReason,
+        score: this.score,
+        seconds: this.t,
+        distance: Math.floor(this.distance),
+        passed: this.passed,
+        missed: this.missed,
+        reps: this.reps(),
+        health: this.health,
+        total: this.level.walls.length,
+      };
+    }
+  }
+
+  /* ===========================================================================
+   * Drawing a pose as a stick figure
+   * ---------------------------------------------------------------------------
+   * Used for both the wall cutout and the fit meter, so a shape looks identical
+   * wherever the player sees it. `plot` maps body-scale units to pixels.
+   * ======================================================================== */
+  function drawPoseFigure(g, pose, plot, bsPx, opts) {
+    const o = opts || {};
+    const t = pose.target;
+    const lw = Math.max(o.minWidth || 2, (o.widthBs || 0.16) * bsPx);
+    g.lineStyle(lw, o.color, o.alpha === undefined ? 1 : o.alpha);
+    for (let i = 0; i < HP.POSE_BONES.length; i++) {
+      const a = t[HP.POSE_BONES[i][0]];
+      const b = t[HP.POSE_BONES[i][1]];
+      if (!a || !b) continue;
+      const pa = plot(a[0], a[1]);
+      const pb = plot(b[0], b[1]);
+      g.beginPath();
+      g.moveTo(pa.x, pa.y);
+      g.lineTo(pb.x, pb.y);
+      g.strokePath();
+    }
+    if (t.nose) {
+      const head = plot(t.nose[0], t.nose[1]);
+      g.fillStyle(o.color, o.alpha === undefined ? 1 : o.alpha);
+      g.fillCircle(head.x, head.y, Math.max(2, 0.26 * bsPx));
+    }
+  }
+
+  /* ===========================================================================
+   * WallScene — extends RunScene so the sky, road, runner and fx are shared
+   * rather than duplicated. Only the walls are new.
+   * ======================================================================== */
+  const WALL_COLORS = {
+    frame: 0x8fe9ff,
+    panel: 0x123048,
+    far: 0x6d7f9a,        // too far away to be judged yet
+    miss: 0xff2b57,
+    close: 0xffc23d,
+    match: 0x3fffb4,
+    passed: 0x3fffb4,
+    failed: 0xff2b57,
+  };
+
+  class WallScene extends HP.RunScene {
+    create() {
+      super.create();
+      /* Explicit depths: walls must sit behind the runner, and RunScene's layers
+       * are otherwise ordered purely by creation. */
+      this.gSky.setDepth(0);
+      this.gRoad.setDepth(1);
+      this.gWalls = this.add.graphics().setDepth(2);
+      this.gObstacles.setDepth(3);
+      this.gPlayer.setDepth(4);
+      this.gVoid.setDepth(5);
+      this.gFx.setDepth(6);
+
+      this.sim.on('wallPassed', () => { this.flash = 0.35; });
+      this.sim.on('wallMissed', () => { this.shake = 1; this.flash = 1; });
+    }
+
+    update(time, delta) {
+      /* Own clock, for the same reason RunScene does: Phaser's delta is smoothed
+       * toward the target frame rate and understates real elapsed time on any
+       * device below 60fps. Wall timing is the entire mechanic here. */
+      const now = util.now();
+      const dt = this._lastUpdateT === null
+        ? 0
+        : clamp(now - this._lastUpdateT, 0, this.cfg.game.maxTimestep);
+      this._lastUpdateT = now;
+      if (dt <= 0) return;
+
+      this.sim.update(dt);
+
+      // The runner is auto-jogging, so keep the legs moving at a steady rate.
+      this.runPhase += this.getCadence() * Math.PI * dt;
+      this.shake = Math.max(0, this.shake - dt * 3.2);
+      this.flash = Math.max(0, this.flash - dt * 2.6);
+      this.voidWobble += dt * 2;
+
+      const shakeX = this.shake ? (Math.random() * 2 - 1) * 10 * this.shake : 0;
+      const shakeY = this.shake ? (Math.random() * 2 - 1) * 7 * this.shake : 0;
+      this.cameras.main.setScroll(shakeX, shakeY);
+
+      this._drawSky(time);
+      this._drawRoad();
+      this._drawWalls();
+      this._drawPlayer();
+      this._drawFx();
+    }
+
+    /** One body-scale unit in pixels, at depth scale s. Tied to the avatar's own
+     *  torso so a cutout reads as the same size as the runner. */
+    _bsPx(s) {
+      return 34 * (this.laneW / 76) * s;
+    }
+
+    _drawWalls() {
+      const g = this.gWalls;
+      const sim = this.sim;
+      g.clear();
+
+      // Far to near, so nearer walls paint over farther ones.
+      const list = sim.walls.slice().sort((a, b) => b.z - a.z);
+
+      for (let i = 0; i < list.length; i++) {
+        const w = list[i];
+        if (w.z < -6 || w.z > 120) continue;
+        const pose = HP.POSES[w.poseId];
+        if (!pose) continue;
+
+        const s = this._scaleAt(w.z);
+        const yBase = this._yAt(w.z);
+        const bsPx = this._bsPx(s);
+        const alpha = clamp(s * 3.2, 0.12, 1);
+
+        /* --- the panel: a frame spanning the road ------------------------- */
+        const halfW = this.roadHalfW * s * 1.06;
+        const height = this.cfg.wall.wallHeightBs * bsPx;
+        const top = yBase - height;
+
+        g.fillStyle(WALL_COLORS.panel, alpha * 0.62);
+        g.fillRect(this.cx - halfW, top, halfW * 2, height);
+        // Two strokes: a soft outer halo and a hard inner edge. A single thin
+        // stroke reads as a wireframe box rather than something you would hit.
+        g.lineStyle(Math.max(3, 9 * s), WALL_COLORS.frame, alpha * 0.20);
+        g.strokeRect(this.cx - halfW, top, halfW * 2, height);
+        g.lineStyle(Math.max(1.5, 3 * s), WALL_COLORS.frame, alpha * 0.95);
+        g.strokeRect(this.cx - halfW, top, halfW * 2, height);
+        // Bright sill along the base, so the wall reads as standing on the road.
+        g.fillStyle(WALL_COLORS.frame, alpha * 0.55);
+        g.fillRect(this.cx - halfW, yBase - Math.max(1.5, 3 * s), halfW * 2,
+          Math.max(1.5, 3 * s));
+
+        /* --- the cutout --------------------------------------------------- */
+        // Hip line placed so the knees (target y ~ +1.0) land near the ground.
+        const hipY = yBase - 1.18 * bsPx;
+        const plot = (bx, by) => ({ x: this.cx + bx * bsPx, y: hipY + by * bsPx });
+
+        let color = WALL_COLORS.far;
+        if (w.state === 'done') {
+          color = w.result === 'pass' ? WALL_COLORS.passed : WALL_COLORS.failed;
+        } else if (w.state === 'armed' || w.state === 'contact') {
+          const err = sim.signals.poseError;
+          const tol = sim.toleranceFor(w.poseId);
+          if (!isFinite(err)) color = WALL_COLORS.miss;
+          else if (err < tol) color = WALL_COLORS.match;
+          else if (err < tol * 2) color = WALL_COLORS.close;
+          else color = WALL_COLORS.miss;
+        }
+
+        // A dim wide pass first so the shape reads as a glowing hole rather than
+        // a line drawing.
+        drawPoseFigure(g, pose, plot, bsPx, {
+          color: color, alpha: alpha * 0.28, widthBs: 0.42, minWidth: 5,
+        });
+        drawPoseFigure(g, pose, plot, bsPx, {
+          color: color, alpha: alpha, widthBs: 0.15, minWidth: 2,
+        });
+
+        /* --- hold progress, drawn on the wall while passing through -------- */
+        if (w.state === 'contact' && w.required > 0) {
+          const frac = clamp(w.held / w.required, 0, 1);
+          const barW = halfW * 1.6;
+          const barY = top - 8 * s - 4;
+          g.fillStyle(0x000000, alpha * 0.5);
+          g.fillRect(this.cx - barW / 2, barY, barW, Math.max(3, 7 * s));
+          g.fillStyle(WALL_COLORS.match, alpha);
+          g.fillRect(this.cx - barW / 2, barY, barW * frac, Math.max(3, 7 * s));
+        }
+      }
+    }
+  }
+
+  HP.WallSim = WallSim;
+  HP.WallScene = WallScene;
+  HP.buildLevel = buildLevel;
+  HP.WALL_STARTER_SPEC = STARTER_SPEC;
+  HP.drawPoseFigure = drawPoseFigure;
+})(window.HP);

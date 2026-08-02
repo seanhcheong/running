@@ -24,6 +24,8 @@
  *   ?debug=1    skeleton overlay + numeric readout from the first frame
  *   ?canvas=1   force Phaser's canvas renderer, freeing the second WebGL context
  *               for TF.js (worth trying if a phone thermally throttles)
+ *   ?mode=wall  start straight into Wall Mode (see docs/DESIGN-wall-mode.md).
+ *               In ?sim=1 the number keys 1-6 stand in for holding a pose.
  * ========================================================================== */
 
 window.HP = window.HP || {};
@@ -37,6 +39,17 @@ window.HP = window.HP || {};
 
   const SIM_MODE = util.queryFlag('sim');
   const FORCE_CANVAS = util.queryFlag('canvas');
+
+  function queryValue(name) {
+    try { return new URLSearchParams(window.location.search).get(name); }
+    catch (e) { return null; }
+  }
+  const START_MODE = queryValue('mode') === 'wall' ? 'wall' : 'run';
+
+  /* Sim-mode stand-in for holding a pose: number keys pick which shape you are
+   * "in". Order matters — it is the on-screen key legend too. */
+  const SIM_POSE_KEYS = ['stand_tall', 'squat_bottom', 'star', 't_pose',
+                         'knee_up_left', 'knee_up_right'];
 
   /* ===========================================================================
    * DOM
@@ -66,8 +79,24 @@ window.HP = window.HP || {};
     btnMute: el('btnMute'),
     btnQuit: el('btnQuit'),
 
+    wallHud: el('wallHud'),
+    wallScore: el('wallScore'),
+    wallCombo: el('wallCombo'),
+    wallHealth: el('wallHealth'),
+    wallToast: el('wallToast'),
+    fitWrap: el('fitWrap'),
+    fitPose: el('fitPose'),
+    fitHint: el('fitHint'),
+    fitCanvas: el('fitCanvas'),
+    fitFill: el('fitFill'),
+    fitTarget: el('fitTarget'),
+    fitStatus: el('fitStatus'),
+    btnWallDebug: el('btnWallDebug'),
+    btnWallQuit: el('btnWallQuit'),
+
     screenStart: el('screenStart'),
     btnStart: el('btnStart'),
+    btnStartWall: el('btnStartWall'),
     simNote: el('simNote'),
 
     screenCalib: el('screenCalib'),
@@ -91,6 +120,10 @@ window.HP = window.HP || {};
     overTime: el('overTime'),
     overDodged: el('overDodged'),
     overHits: el('overHits'),
+    overDistanceLabel: el('overDistanceLabel'),
+    overTimeLabel: el('overTimeLabel'),
+    overDodgedLabel: el('overDodgedLabel'),
+    overHitsLabel: el('overHitsLabel'),
     overNote: el('overNote'),
     btnAgain: el('btnAgain'),
     btnRecalibrate: el('btnRecalibrate'),
@@ -111,13 +144,19 @@ window.HP = window.HP || {};
    * ======================================================================== */
   const audio = new HP.Audio(CONFIG);
   const sim = new HP.GameSim(CONFIG);
+  const wallSim = new HP.WallSim(CONFIG);
 
   let tracker = null;         // null in sim mode
   let calibration = null;
   let game = null;            // Phaser.Game, created lazily on the first run
   let scene = null;
 
+  let mode = START_MODE;      // 'run' | 'wall'
+  let gameKind = null;        // which scene the live Phaser.Game is running
   let phase = 'start';        // start | loading | calibrating | running | over | error
+  let framingActive = false;  // wall mode's framing-only pre-flight
+  let framingHeldSince = null;
+  let simPoseId = null;       // sim mode: the pose the player is "holding"
   let debugOn = util.queryFlag('debug') || CONFIG.debug.overlayOnByDefault;
   let booted = false;         // camera + model are up
 
@@ -149,10 +188,10 @@ window.HP = window.HP || {};
    * 'pip'  corner mirror (playing — enough to notice you have drifted out)
    * cam-off deliberately keeps a geometry class so the element still has a size.
    */
-  function setCameraMode(mode) {
+  function setCameraMode(which) {
     dom.body.classList.remove('cam-full', 'cam-pip', 'cam-off');
-    if (mode === 'pip') dom.body.classList.add('cam-pip');
-    else if (mode === 'full') dom.body.classList.add('cam-full');
+    if (which === 'pip') dom.body.classList.add('cam-pip');
+    else if (which === 'full') dom.body.classList.add('cam-full');
     else dom.body.classList.add('cam-full', 'cam-off');
   }
 
@@ -167,9 +206,11 @@ window.HP = window.HP || {};
 
   function showError(err) {
     phase = 'error';
+    framingActive = false;
     console.error('[HP]', err);
     hideLoading();
     util.hide(dom.hud);
+    util.hide(dom.wallHud);
     setCameraMode('off');
 
     // Boot failed part-way, so release the camera rather than leaving the
@@ -317,15 +358,16 @@ window.HP = window.HP || {};
     // Continuous signals are polled per frame; only the discrete gestures need
     // to be events, because missing one of those would lose an input entirely.
     tracker.on('frame', () => {
-      if (phase === 'running') pullSignals();
+      if (phase !== 'running') return;
+      if (mode === 'wall') pullWallSignals(); else pullSignals();
     });
 
     tracker.on('onJump', () => {
-      if (phase === 'running') sim.queueJump();
+      if (phase === 'running' && mode === 'run') sim.queueJump();
     });
 
     tracker.on('step', () => {
-      if (phase === 'running') audio.step();
+      if (phase === 'running' && mode === 'run') audio.step();
     });
 
     // Deferred rather than shown now: the toast lives inside the HUD, which is
@@ -383,6 +425,9 @@ window.HP = window.HP || {};
 
   function startCalibration() {
     phase = 'calibrating';
+    framingActive = false;
+    mode = 'run';
+    util.hide(dom.wallHud);
     sim.reset();
     util.hide(dom.hud);
     util.hide(dom.countdown);
@@ -430,7 +475,7 @@ window.HP = window.HP || {};
     if (SIM_MODE) applySimInput(); else pullSignals();
     updateHud();
 
-    ensureGame();
+    ensureGame('run');
     sim.start();
 
     if (slowGpu) showToast('NO GPU — SLOW', 'hit', 2600);
@@ -457,13 +502,32 @@ window.HP = window.HP || {};
     });
   }
 
-  function ensureGame() {
-    if (game) return;
-    scene = new HP.RunScene({
-      sim: sim,
-      config: CONFIG,
-      getCadence: () => sim.signals.cadence || 0,
-    });
+  /**
+   * One Phaser.Game at a time, rebuilt if the mode changes. Modes are only
+   * chosen from the start screen, so a destroy/recreate is cheap and avoids
+   * juggling two scene keys and two live WebGL contexts.
+   */
+  function ensureGame(kind) {
+    if (game && gameKind === kind) return;
+    if (game) {
+      game.destroy(true);
+      game = null;
+      scene = null;
+    }
+    gameKind = kind;
+    scene = kind === 'wall'
+      ? new HP.WallScene({
+          sim: wallSim,
+          config: CONFIG,
+          // Auto-scrolling, so the runner's legs move at a steady jog rather
+          // than at a measured cadence there is no longer any of.
+          getCadence: () => 2.4,
+        })
+      : new HP.RunScene({
+          sim: sim,
+          config: CONFIG,
+          getCadence: () => sim.signals.cadence || 0,
+        });
     game = new Phaser.Game({
       type: FORCE_CANVAS ? Phaser.CANVAS : Phaser.AUTO,
       parent: dom.gameRoot,
@@ -521,11 +585,339 @@ window.HP = window.HP || {};
 
   function toStartScreen() {
     phase = 'start';
+    framingActive = false;
     util.hide(dom.hud);
+    util.hide(dom.wallHud);
     util.hide(dom.countdown);
     util.show(dom.calibPanel);
     setCameraMode('off');
     showScreen('screenStart');
+  }
+
+
+  /* ===========================================================================
+   * WALL MODE
+   * ---------------------------------------------------------------------------
+   * Notably simpler to enter than the running mode, because pose matching is
+   * hip-anchored and body-scale divided — so it needs NO calibration at all. No
+   * centre line, no standing hip height, no comfortable pace. Just framing.
+   * ======================================================================== */
+
+  /** Framing-only pre-flight. Reuses the calibration screen's furniture. */
+  function startWallFraming() {
+    phase = 'calibrating';
+    wallSim.reset();
+    util.hide(dom.hud);
+    util.hide(dom.wallHud);
+    util.hide(dom.countdown);
+    util.show(dom.calibPanel);
+    util.hide(dom.btnCalibSkip);
+    setCameraMode('full');
+    showScreen('screenCalib');
+
+    util.setText(dom.calibIndex, '1');
+    util.setText(dom.calibTitle, 'Get in frame, head to knees');
+    util.setText(dom.calibInstruction, 'Wall Mode needs no pace calibration — just framing.');
+    util.setText(dom.calibSub,
+      'Feet can be out of frame, but your hands raised overhead should be inside it.');
+    util.setText(dom.calibHint, '');
+    util.setText(dom.calibCadence, '');
+    dom.calibProgress.style.width = '0%';
+    framingHeldSince = null;
+    framingActive = true;
+  }
+
+  /**
+   * Runs from the HUD loop while the framing gate is up.
+   * Wall Mode asks for more than the running mode: the star pose puts the wrists
+   * above the head, so headroom is checked here rather than discovered later as
+   * a pose that can never be matched.
+   */
+  function tickWallFraming() {
+    if (!tracker) return;
+    const st = tracker.state;
+    const c = CONFIG.calibration;
+    const wristsVisible = st.poseNorm &&
+      tracker.keypointMap &&
+      tracker.keypointMap.left_wrist &&
+      tracker.keypointMap.right_wrist &&
+      tracker.keypointMap.left_wrist.score >= CONFIG.pose.minKeypointScore &&
+      tracker.keypointMap.right_wrist.score >= CONFIG.pose.minKeypointScore;
+    const ok = st.tracked && st.fullBody && wristsVisible;
+
+    if (!ok) {
+      framingHeldSince = null;
+      dom.calibProgress.style.width = '0%';
+      util.setText(dom.calibProgressLabel, '');
+      if (!st.tracked) util.setText(dom.calibHint, 'No one detected. Stand in front of the camera.');
+      else if (!st.fullBody) util.setText(dom.calibHint, 'Step back until your knees are in frame.');
+      else util.setText(dom.calibHint,
+        'Raise your hands overhead — they need to be in frame too. Tilt the phone up a little.');
+      return;
+    }
+
+    util.setText(dom.calibHint, '');
+    const now = util.now();
+    if (framingHeldSince === null) framingHeldSince = now;
+    const held = now - framingHeldSince;
+    dom.calibProgress.style.width =
+      (clamp(held / c.framingHoldSeconds, 0, 1) * 100).toFixed(1) + '%';
+    util.setText(dom.calibProgressLabel, 'Hold still…');
+
+    if (held >= c.framingHoldSeconds) {
+      framingActive = false;
+      if (audio) audio.calibrationStepDone();
+      beginWallRun();
+    }
+  }
+
+  async function beginWallRun() {
+    wallSim.reset();
+    audio.reset();
+    simPoseId = null;
+
+    util.hide(dom.calibPanel);
+    showScreen('screenCalib');
+    await countdownAlone();
+    util.show(dom.calibPanel);
+
+    phase = 'running';
+    mode = 'wall';
+    showScreen(null);
+    util.hide(dom.countdown);
+    util.hide(dom.hud);
+    util.show(dom.wallHud);
+    setCameraMode(SIM_MODE ? 'off' : 'pip');
+
+    // Threshold marker, same idea as the pace meter's comfortable-pace line.
+    dom.fitTarget.style.left = (wallSim.fitThreshold() * 100).toFixed(1) + '%';
+
+    if (SIM_MODE) applyWallSignals(); else pullWallSignals();
+    updateWallHud();
+    ensureGame('wall');
+    wallSim.start();
+  }
+
+  /**
+   * Pose → game. The ONLY crossing point, exactly like pullSignals() for the
+   * running mode: one number, so the sim stays free of pose code.
+   */
+  function pullWallSignals() {
+    const sig = wallSim.signals;
+    if (!tracker) { sig.poseError = Infinity; sig.tracked = false; return; }
+    const st = tracker.state;
+    sig.tracked = st.tracked;
+    const w = wallSim.activeWall();
+    if (!w || !st.poseNorm) { sig.poseError = Infinity; return; }
+    sig.poseError = HP.poseLib.errorFor(
+      st.poseNorm, w.poseId, CONFIG.pose.minKeypointScore);
+  }
+
+  /** Sim-mode stand-in: a number key says which pose you are holding. */
+  function applyWallSignals() {
+    const sig = wallSim.signals;
+    sig.tracked = true;
+    const w = wallSim.activeWall();
+    // 1.5 rather than Infinity so the fit bar still reads as "wrong shape"
+    // instead of "cannot see you", which is a different failure.
+    sig.poseError = (w && simPoseId && simPoseId === w.poseId) ? 0 : 1.5;
+  }
+
+  function wireWallSim() {
+    wallSim.on('wallArmed', (e) => {
+      const pose = HP.POSES[e.poseId];
+      if (pose) audio.obstacleWarn('lane', util.now() * 1000);
+    });
+    wallSim.on('wallPassed', (e) => {
+      audio.milestone();
+      showWallToast(e.combo > 1 ? 'x' + e.combo : 'CLEAR', 'good', 700);
+    });
+    wallSim.on('wallMissed', () => {
+      audio.hit(false);
+      showWallToast('MISS', 'hit', 800);
+    });
+    wallSim.on('gameover', (summary) => endWallRun(summary));
+    wallSim.on('complete', (summary) => endWallRun(summary));
+  }
+
+  function showWallToast(text, cls, ms) {
+    dom.wallToast.className = 'toast show' + (cls ? ' ' + cls : '');
+    util.setText(dom.wallToast, text);
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { dom.wallToast.className = 'toast'; }, ms || 800);
+  }
+
+  function updateWallHud() {
+    const w = wallSim.activeWall();
+    const cfgW = CONFIG.wall;
+
+    util.setText(dom.wallScore, String(wallSim.score));
+    util.setText(dom.wallCombo, 'x' + wallSim.combo);
+    util.setText(dom.wallHealth,
+      wallSim.health > 0 ? '◆'.repeat(wallSim.health) : '—');
+    dom.wallHealth.classList.toggle('hurt', wallSim.health === 2);
+    dom.wallHealth.classList.toggle('critical', wallSim.health <= 1);
+
+    if (!w) {
+      util.setText(dom.fitPose, '—');
+      util.setText(dom.fitHint, '');
+      dom.fitFill.style.width = '0%';
+      dom.fitFill.className = 'fit-fill';
+      dom.fitStatus.className = 'fit-status';
+      util.setText(dom.fitStatus,
+        wallSim.walls.length ? 'GET READY' : 'CLEAR ROAD');
+      drawFitCanvas(null);
+      return;
+    }
+
+    const pose = HP.POSES[w.poseId];
+    util.setText(dom.fitPose, pose ? pose.label : w.poseId);
+
+    const err = wallSim.signals.poseError;
+    const tol = wallSim.toleranceFor(w.poseId);
+    const fit = wallSim.fit();
+    dom.fitFill.style.width = (fit * 100).toFixed(1) + '%';
+
+    let band = 'far';
+    if (!isFinite(err)) band = 'far';
+    else if (err < tol) band = 'match';
+    else if (err < tol * 2) band = 'close';
+    dom.fitFill.className = 'fit-fill ' + band;
+
+    /* Naming the worst joint is the difference between "you are wrong" and
+     * "your left knee is wrong", which is the whole point of a fit meter. */
+    let hint = '';
+    if (!isFinite(err)) {
+      hint = tracker && !wallSim.signals.tracked ? 'CAN’T SEE YOU' : 'OUT OF FRAME';
+    } else if (band !== 'match' && tracker && tracker.state.poseNorm && pose) {
+      const detail = HP.poseLib.poseErrorDetail(
+        tracker.state.poseNorm, pose, CONFIG.pose.minKeypointScore);
+      if (detail.worst) hint = 'FIX ' + detail.worst.replace(/_/g, ' ').toUpperCase();
+    }
+    util.setText(dom.fitHint, hint);
+
+    if (w.state === 'contact') {
+      const frac = w.required > 0 ? clamp(w.held / w.required, 0, 1) : 1;
+      dom.fitStatus.className = 'fit-status holding';
+      util.setText(dom.fitStatus, 'HOLD  ' + Math.round(frac * 100) + '%');
+    } else if (band === 'match') {
+      dom.fitStatus.className = 'fit-status match';
+      util.setText(dom.fitStatus, 'LOCKED');
+    } else if (!isFinite(err)) {
+      dom.fitStatus.className = 'fit-status lost';
+      util.setText(dom.fitStatus, 'NO POSE');
+    } else {
+      dom.fitStatus.className = 'fit-status';
+      util.setText(dom.fitStatus, 'MATCH THE SHAPE');
+    }
+
+    drawFitCanvas(w);
+  }
+
+  /** Accept either the target format ([x,y]) or a normalised live pose ({x,y}). */
+  function jointXY(src, name) {
+    const v = src ? src[name] : null;
+    if (!v) return null;
+    return Array.isArray(v) ? { x: v[0], y: v[1] } : v;
+  }
+
+  function strokeFigure(ctx, src, plot, color, width, onlyJoints) {
+    const allowed = onlyJoints ? {} : null;
+    if (allowed) onlyJoints.forEach((j) => { allowed[j] = 1; });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < HP.POSE_BONES.length; i++) {
+      const an = HP.POSE_BONES[i][0];
+      const bn = HP.POSE_BONES[i][1];
+      const a = jointXY(src, an);
+      const b = jointXY(src, bn);
+      if (!a || !b) continue;
+      const pa = plot(a.x, a.y);
+      const pb = plot(b.x, b.y);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+    const nose = jointXY(src, 'nose');
+    if (nose) {
+      const p = plot(nose.x, nose.y);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, width * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /**
+   * Target shape in outline with the player's LIVE pose drawn over it, both in
+   * the same normalised space. Seeing the two figures diverge is what tells the
+   * player which limb to move — a bar alone cannot say that.
+   */
+  function drawFitCanvas(wall) {
+    const c = dom.fitCanvas;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const cw = c.clientWidth || 104;
+    const ch = c.clientHeight || 104;
+    if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) {
+      c.width = Math.round(cw * dpr);
+      c.height = Math.round(ch * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    if (!wall) return;
+    const pose = HP.POSES[wall.poseId];
+    if (!pose) return;
+
+    const b = HP.poseLib.poseBounds(pose);
+    const pad = 8;
+    const sc = Math.min(
+      (cw - pad * 2) / Math.max(b.width, 0.2),
+      (ch - pad * 2) / Math.max(b.height, 0.2)
+    );
+    const ox = cw / 2 - ((b.minX + b.maxX) / 2) * sc;
+    const oy = ch / 2 - ((b.minY + b.maxY) / 2) * sc;
+    const plot = (bx, by) => ({ x: ox + bx * sc, y: oy + by * sc });
+
+    strokeFigure(ctx, pose.target, plot, 'rgba(255,255,255,0.30)',
+      Math.max(3, sc * 0.14));
+
+    // In sim mode there is no skeleton, so show the pose the player selected —
+    // which is honestly what "your current shape" means there.
+    const live = SIM_MODE
+      ? (simPoseId && HP.POSES[simPoseId] ? HP.POSES[simPoseId].target : null)
+      : (tracker ? tracker.state.poseNorm : null);
+    if (live) {
+      strokeFigure(ctx, live, plot,
+        wallSim.matched() ? '#3fffb4' : '#ff5c7a',
+        Math.max(2, sc * 0.085), pose.joints);
+    }
+  }
+
+  function endWallRun(summary) {
+    phase = 'over';
+    if (summary.reason === 'complete') audio.milestone(); else audio.gameOver();
+    util.hide(dom.wallHud);
+    setCameraMode('off');
+
+    util.setText(dom.overTitle,
+      summary.reason === 'complete' ? 'Workout complete'
+        : summary.reason === 'quit' ? 'Session ended' : 'Crushed');
+    util.setText(dom.overDistance, String(summary.score));
+    util.setText(dom.overTime, formatTime(summary.seconds));
+    util.setText(dom.overDodged, String(summary.reps));
+    util.setText(dom.overHits, String(summary.missed));
+    util.setText(dom.overDistanceLabel, 'score');
+    util.setText(dom.overTimeLabel, 'time');
+    util.setText(dom.overDodgedLabel, 'reps');
+    util.setText(dom.overHitsLabel, 'missed');
+    util.setText(dom.overNote,
+      summary.passed + ' of ' + summary.total + ' shapes hit. Two positions make ' +
+      'one rep, so ' + summary.reps + ' rep' + (summary.reps === 1 ? '' : 's') + '.');
+    showScreen('screenOver');
   }
 
   /* ===========================================================================
@@ -576,8 +968,16 @@ window.HP = window.HP || {};
     if (hudRafId !== null) return;
     const tick = () => {
       hudRafId = requestAnimationFrame(tick);
-      if (SIM_MODE && phase === 'running') applySimInput();
-      if (phase === 'running') updateHud();
+      if (framingActive) tickWallFraming();
+      if (mode === 'wall') {
+        if (phase === 'running') {
+          if (SIM_MODE) applyWallSignals();
+          updateWallHud();
+        }
+      } else {
+        if (SIM_MODE && phase === 'running') applySimInput();
+        if (phase === 'running') updateHud();
+      }
       if (debugOn) {
         if (tracker) tracker.drawDebug(dom.debugCanvas);
         updateDebugText();
@@ -774,6 +1174,16 @@ window.HP = window.HP || {};
       return;
     }
     if (!SIM_MODE) return;
+
+    /* Wall Mode: a number key stands in for holding a pose. Held, not tapped —
+     * the wall wants the shape sustained through contact, and the sim should
+     * exercise that rather than paper over it. */
+    if (mode === 'wall') {
+      const picked = SIM_POSE_KEYS[parseInt(e.key, 10) - 1];
+      if (picked) { simPoseId = picked; e.preventDefault(); }
+      return;
+    }
+
     switch (e.key) {
       case 'ArrowUp': simInput.up = true; break;
       case 'ArrowDown': simInput.down = true; break;
@@ -788,6 +1198,11 @@ window.HP = window.HP || {};
 
   function onKeyUp(e) {
     if (!SIM_MODE) return;
+    if (mode === 'wall') {
+      const picked = SIM_POSE_KEYS[parseInt(e.key, 10) - 1];
+      if (picked && simPoseId === picked) { simPoseId = null; e.preventDefault(); }
+      return;
+    }
     switch (e.key) {
       case 'ArrowUp': simInput.up = false; break;
       case 'ArrowDown': simInput.down = false; break;
@@ -802,21 +1217,26 @@ window.HP = window.HP || {};
   /* ===========================================================================
    * BUTTONS
    * ======================================================================== */
-  async function onStart() {
+  async function onStart(which) {
     if (phase === 'loading') return;
     phase = 'loading';
+    mode = which === 'wall' ? 'wall' : 'run';
     // Both of these need the user gesture we are inside right now.
     await audio.unlock();
 
     try {
       if (SIM_MODE) {
-        // No camera and no model. paceRatio comes straight off the keyboard, so
-        // there is no baseline to calibrate — go straight to a countdown.
+        // No camera and no model: the keyboard stands in for the pose signals,
+        // so there is nothing to calibrate or frame.
         booted = true;
-        await beginRun(true);
+        if (mode === 'wall') await beginWallRun();
+        else await beginRun(true);
       } else {
         await boot();
-        startCalibration();
+        // Wall Mode needs framing but NOT calibration — pose matching is
+        // hip-anchored and body-scale divided, so there is no baseline to learn.
+        if (mode === 'wall') startWallFraming();
+        else startCalibration();
       }
     } catch (err) {
       showError(err);
@@ -824,7 +1244,17 @@ window.HP = window.HP || {};
   }
 
   function wireButtons() {
-    dom.btnStart.addEventListener('click', onStart);
+    dom.btnStart.addEventListener('click', () => onStart('run'));
+    dom.btnStartWall.addEventListener('click', () => onStart('wall'));
+
+    dom.btnWallDebug.addEventListener('click', () => setDebug(!debugOn));
+    dom.btnWallQuit.addEventListener('click', () => {
+      if (phase === 'running' && mode === 'wall') {
+        wallSim.status = 'over';
+        wallSim.endReason = 'quit';
+        endWallRun(wallSim.summary());
+      }
+    });
     dom.btnRetry.addEventListener('click', () => {
       // A retry is a fresh attempt at boot, not a page reload: the model may
       // already be cached, and a permission grant needs a new user gesture.
@@ -839,10 +1269,16 @@ window.HP = window.HP || {};
     dom.btnCalibCancel.addEventListener('click', () => calibration && calibration.abort());
 
     dom.btnAgain.addEventListener('click', () => {
-      if (booted) beginRun(true);
-      else toStartScreen();
+      if (!booted) { toStartScreen(); return; }
+      if (mode === 'wall') beginWallRun();
+      else beginRun(true);
     });
     dom.btnRecalibrate.addEventListener('click', () => {
+      if (mode === 'wall') {
+        // Re-frame rather than re-calibrate: there is no baseline in this mode.
+        if (SIM_MODE) beginWallRun(); else startWallFraming();
+        return;
+      }
       if (SIM_MODE || !calibration) beginRun(true);
       else startCalibration();
     });
@@ -865,7 +1301,16 @@ window.HP = window.HP || {};
    * ======================================================================== */
   function init() {
     wireSim();
+    wireWallSim();
     wireButtons();
+
+    /* A pose library that cannot distinguish two of its own shapes is a content
+     * bug that shows up later as walls passing when they should not. Say so at
+     * boot instead. */
+    const poseProblems = HP.poseLib.validateLibrary(HP.POSES, CONFIG.wall.defaultTolerance);
+    if (poseProblems.length) {
+      console.warn('[HP] pose library problems:\n  ' + poseProblems.join('\n  '));
+    }
 
     // The pace meter's target line sits at paceRatio 1.0 — "your comfortable
     // pace" — on a bar that runs to maxRatio. Keep the two in sync from config.
@@ -877,11 +1322,25 @@ window.HP = window.HP || {};
     // and skeleton are most useful DURING calibration, which is when framing and
     // lighting problems actually get diagnosed.
     startHudLoop();
-    if (SIM_MODE) util.show(dom.simNote);
+    if (SIM_MODE) {
+      util.show(dom.simNote);
+      dom.simNote.innerHTML = START_MODE === 'wall'
+        ? 'SIM MODE — hold <kbd>1</kbd>–<kbd>6</kbd> to "be" a pose: ' +
+          SIM_POSE_KEYS.map((id, i) => (i + 1) + ' ' +
+            (HP.POSES[id] ? HP.POSES[id].label : id)).join(', ')
+        : dom.simNote.innerHTML;
+    }
     setCameraMode('off');
     showScreen('screenStart');
 
-    HP.app = { sim, audio, get tracker() { return tracker; }, get game() { return game; } };
+    HP.app = {
+      sim: sim,
+      wallSim: wallSim,
+      audio: audio,
+      get mode() { return mode; },
+      get tracker() { return tracker; },
+      get game() { return game; },
+    };
   }
 
   if (document.readyState === 'loading') {

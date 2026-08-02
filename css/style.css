@@ -87,9 +87,6 @@ html, body {
 #video {
   transform: scaleX(-1);
   transform-origin: center;
-}
-
-#video {
   background: #000;
   z-index: 0;
 }
@@ -660,4 +657,126 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .gap-wrap.danger, .tracking-warn { animation: none; }
   .countdown { animation: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * WALL MODE
+ * ---------------------------------------------------------------------------
+ * Its own HUD, so nothing here can affect the running mode's layout.
+ * ------------------------------------------------------------------------ */
+#wallHud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px)
+           calc(var(--safe-b) + 10px) calc(var(--safe-l) + 12px);
+  display: flex;
+  flex-direction: column;
+}
+
+body.cam-pip #wallHud .hud-top { padding-right: min(27vmin, 154px); }
+
+#wallHealth { color: var(--accent); letter-spacing: 0.08em; }
+#wallHealth.hurt { color: var(--warn); }
+#wallHealth.critical { color: var(--danger); }
+#wallCombo { color: var(--accent-2); }
+
+/* --- the fit meter -------------------------------------------------------
+ * Bottom-anchored like the pace meter, and for the same reason: it is the
+ * thing the player reads continuously while moving. The canvas shows the
+ * TARGET skeleton with the player's live pose overlaid, so a miss says which
+ * limb is wrong rather than only that something is. */
+.fit-wrap {
+  margin-top: auto;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 14px;
+  padding: 8px 10px 10px;
+  backdrop-filter: blur(6px);
+}
+
+.fit-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+#fitPose {
+  font-size: clamp(13px, 2.8vmin, 19px);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+#fitHint {
+  font-size: clamp(9px, 1.9vmin, 12px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: right;
+}
+
+.fit-body { display: flex; align-items: stretch; gap: 10px; }
+
+#fitCanvas {
+  width: min(22vmin, 104px);
+  height: min(22vmin, 104px);
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+}
+
+.fit-bar-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.fit-bar {
+  position: relative;
+  height: clamp(16px, 3vmin, 26px);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.fit-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--dim);
+  /* Short transition only: this is live telemetry, not an animation. */
+  transition: width 70ms linear, background 120ms linear;
+}
+.fit-fill.far { background: linear-gradient(90deg, var(--danger), #ff6b8a); }
+.fit-fill.close { background: linear-gradient(90deg, var(--warn), #ffd97a); }
+.fit-fill.match { background: linear-gradient(90deg, var(--accent), #9dffd4); }
+
+/* The match threshold, marked like the pace meter's comfortable-pace line. */
+.fit-target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+  border-radius: 2px;
+}
+
+.fit-status {
+  font: 800 clamp(11px, 2.2vmin, 15px)/1 var(--font);
+  letter-spacing: 0.12em;
+  color: var(--dim);
+}
+.fit-status.match { color: var(--accent); }
+.fit-status.holding { color: var(--accent-2); }
+.fit-status.lost { color: var(--danger); }
+
+/* Landscape on a short screen: the canvas is the first thing to go. */
+@media (orientation: landscape) and (max-height: 460px) {
+  #fitCanvas { display: none; }
+  .fit-wrap { padding: 6px 10px 8px; }
 }

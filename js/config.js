@@ -415,6 +415,54 @@ window.HP.CONFIG = {
   },
 
   /* ---------------------------------------------------------------------------
+   * WALL MODE — the auto-scrolling pose-cutout mode
+   * ---------------------------------------------------------------------------
+   * See docs/DESIGN-wall-mode.md. Nothing here affects the running mode.
+   *
+   * The player does not set the speed; the level does. Their whole job is to be
+   * in the shape a wall demands as it passes through them.
+   * ------------------------------------------------------------------------ */
+  wall: {
+    // World units/sec. Constant on purpose: raising speed shortens the time to
+    // get into a pose, which forces rushed reps and worse form. Difficulty
+    // should come from harder poses, denser walls and longer holds instead.
+    speed: 8,
+
+    spawnZ: 90,          // world units ahead that a wall becomes visible
+    despawnZ: -12,
+
+    // How long before contact the fit meter arms and the player's pose starts
+    // being sampled. This is the whole "time to react" budget.
+    armSeconds: 1.4,
+
+    /* Fraction of the contact window the pose must be held for. A wall is passed
+     * on ACCUMULATED held time, never on an instant sample: at these frame rates
+     * a single-frame check is unreliable, the same reason jump confirmation is
+     * duration-based. High enough that flailing through poses cannot get lucky,
+     * loose enough that one bad keypoint frame does not fail a correct hold. */
+    minHeldFraction: 0.8,
+
+    /* Worst-joint distance, in body-scale units, within which a pose counts as
+     * matched. Compared against a MAX over joints, not a mean, so this is "every
+     * joint the pose cares about is within this much" — see js/poses.js. */
+    defaultTolerance: 0.22,
+
+    // The fit bar maps error over 0..(tolerance x this), so the match threshold
+    // sits at a fixed fraction of the bar and can be marked like the pace meter.
+    fitRangeMultiple: 3,
+
+    startingHealth: 3,
+    scorePerWall: 100,
+    comboMax: 8,
+    missInvulnSeconds: 0.6,
+
+    // Wall geometry, world units. thickness / speed = how long a pose is held,
+    // so thickness IS the time-under-tension dial. A plank is a very long wall.
+    defaultThickness: 3,
+    wallHeightBs: 3.4,   // panel height in body-scale units of the cutout
+  },
+
+  /* ---------------------------------------------------------------------------
    * CALIBRATION
    * ------------------------------------------------------------------------ */
   calibration: {

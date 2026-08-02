@@ -288,6 +288,9 @@ window.HP = window.HP || {};
         hipOffset: 0,       // body-scale units, +ve = hips BELOW neutral
         hipVelocity: 0,     // body-scale units/sec, +ve = up
         kneeDiff: 0,
+        // Keypoints re-expressed in body-scale units from the hip midpoint.
+        // Wall Mode's pose matcher reads this; the running mode ignores it.
+        poseNorm: null,
         amplitude: 0,
         stepCount: 0,
         processFps: 0,
@@ -614,6 +617,7 @@ window.HP = window.HP || {};
       s.cadenceCyclesPerSec = res.cadence / 2;
       s.running = res.running;
       s.paceRatio = this._paceRatioFor(res.cadence);
+      s.poseNorm = null;   // nothing to match against without a pose
       this.emit('lost', { since: this._lostSince, t });
       this.emit('frame', s);
     }
@@ -823,6 +827,11 @@ window.HP = window.HP || {};
         s.ducking = false;
         this.emit('onDuckEnd', { drop: hipOffset });
       }
+
+      /* Normalised pose for Wall Mode's matcher. Hip-anchored and body-scale
+       * divided, so it is translation- and scale-invariant — the same property
+       * every threshold above relies on. Cheap: one pass over 17 keypoints. */
+      s.poseNorm = HP.poseLib ? HP.poseLib.normalise(map, bodyScale) : null;
 
       // Advance the frame clock last, so every consumer above saw the real
       // interval since the previous frame.

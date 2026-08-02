@@ -83,6 +83,52 @@
     </div>
   </div>
 
+  <!-- --------------------------------------------------------- WALL HUD -->
+  <!-- Wall Mode's own HUD. Separate from #hud so the running mode is
+       completely unaffected by anything in here. -->
+  <div id="wallHud" class="hidden">
+    <div class="hud-row hud-top">
+      <div class="hud-block">
+        <div class="hud-label">Score</div>
+        <div class="hud-value" id="wallScore">0</div>
+      </div>
+      <div class="hud-block hud-shields">
+        <div class="hud-label">Combo</div>
+        <div class="hud-value" id="wallCombo">x1</div>
+      </div>
+      <div class="hud-block hud-right">
+        <div class="hud-label">Health</div>
+        <div class="hud-value" id="wallHealth">◆◆◆</div>
+      </div>
+    </div>
+
+    <!-- The fit meter. Not polish: without it a near miss is indistinguishable
+         from a wild miss, and the player has no way to correct in time. -->
+    <div class="fit-wrap" id="fitWrap">
+      <div class="fit-head">
+        <span id="fitPose">—</span>
+        <span id="fitHint" class="dim"></span>
+      </div>
+      <div class="fit-body">
+        <canvas id="fitCanvas" width="150" height="150"></canvas>
+        <div class="fit-bar-wrap">
+          <div class="fit-bar">
+            <div class="fit-fill" id="fitFill"></div>
+            <div class="fit-target" id="fitTarget"></div>
+          </div>
+          <div class="fit-status" id="fitStatus">GET READY</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="wallToast" class="toast"></div>
+
+    <div class="hud-controls">
+      <button id="btnWallDebug" class="mini-btn" type="button">SKELETON</button>
+      <button id="btnWallQuit" class="mini-btn" type="button">END</button>
+    </div>
+  </div>
+
   <!-- ------------------------------------------------------------- START -->
   <section class="screen" id="screenStart">
     <div class="panel">
@@ -102,7 +148,10 @@
         be visible. Bright, even light works best.
       </p>
 
-      <button id="btnStart" class="primary-btn" type="button">START</button>
+      <button id="btnStart" class="primary-btn" type="button">START RUN</button>
+      <button id="btnStartWall" class="ghost-btn" type="button">
+        WALL MODE — hit the shapes, no running
+      </button>
       <p class="perm-note">
         Camera access is required. Everything runs on-device — no video ever
         leaves your phone.
@@ -151,10 +200,10 @@
     <div class="panel">
       <h2 class="over-title" id="overTitle">The void got you</h2>
       <div class="stat-grid">
-        <div class="stat"><div class="stat-num" id="overDistance">0</div><div class="stat-label">metres</div></div>
-        <div class="stat"><div class="stat-num" id="overTime">0:00</div><div class="stat-label">time</div></div>
-        <div class="stat"><div class="stat-num" id="overDodged">0</div><div class="stat-label">dodged</div></div>
-        <div class="stat"><div class="stat-num" id="overHits">0</div><div class="stat-label">hits</div></div>
+        <div class="stat"><div class="stat-num" id="overDistance">0</div><div class="stat-label" id="overDistanceLabel">metres</div></div>
+        <div class="stat"><div class="stat-num" id="overTime">0:00</div><div class="stat-label" id="overTimeLabel">time</div></div>
+        <div class="stat"><div class="stat-num" id="overDodged">0</div><div class="stat-label" id="overDodgedLabel">dodged</div></div>
+        <div class="stat"><div class="stat-num" id="overHits">0</div><div class="stat-label" id="overHitsLabel">hits</div></div>
       </div>
       <p class="over-note" id="overNote"></p>
       <button id="btnAgain" class="primary-btn" type="button">RUN AGAIN</button>
@@ -197,10 +246,12 @@
 <script src="js/config.js"></script>
 <script src="js/util.js"></script>
 <script src="js/one-euro-filter.js"></script>
+<script src="js/poses.js"></script>
 <script src="js/pose-tracker.js"></script>
 <script src="js/calibration.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/game.js"></script>
+<script src="js/wall-mode.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
