@@ -72,10 +72,21 @@ html, body {
  * ------------------------------------------------------------------------ */
 #video, #debugCanvas {
   position: absolute;
-  /* The raw front camera is not mirrored; the player expects a mirror. */
+  transition: all 260ms ease;
+}
+
+/* Mirror the VIDEO only.
+   The raw front camera is not mirrored, and the player expects a mirror, so the
+   image gets flipped here.
+   The skeleton canvas must NOT be flipped as well. pose-tracker.js already
+   mirrors every keypoint x once, right after detection, so the coordinates it
+   draws are ALREADY in mirrored space. Flipping the canvas too inverted the
+   overlay horizontally against the video beneath it: the skeleton moved left
+   when the player moved right, which makes the one diagnostic tool in the game
+   lie about which side of your body is which. */
+#video {
   transform: scaleX(-1);
   transform-origin: center;
-  transition: all 260ms ease;
 }
 
 #video {
