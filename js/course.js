@@ -164,6 +164,11 @@ window.HP = window.HP || {};
       ctx.fillStyle = gnd;
       ctx.fillRect(0, L.horizonY, L.W, L.H - L.horizonY);
 
+      /* --- the street ----------------------------------------------------
+       * Before the road, so a building whose base overhangs the kerb is covered
+       * by the road rather than sitting on top of it. */
+      this._drawStreet(L, scrollZ);
+
       /* --- the road ------------------------------------------------------ */
       if (this.tileReady) this._drawTexturedRoad(L, scrollZ);
       else this._drawFlatRoad(L, scrollZ);
@@ -182,6 +187,77 @@ window.HP = window.HP || {};
       ctx.globalAlpha = 0.75 + 0.25 * clamp(speedNorm, 0, 1);
       ctx.fillRect(0, L.horizonY, L.W, hazeH);
       ctx.globalAlpha = 1;
+    }
+
+    /* --- the street ----------------------------------------------------
+     * Buildings flanking the road, as flat front faces at successive depths and
+     * drawn far to near so the nearer ones occlude the farther. Procedural rather
+     * than from art, deliberately: this needs to key off the SAME projection the
+     * road and the avatar use, and a pre-rendered street would have to agree with
+     * that projection exactly or the two would slide against each other.
+     *
+     * Everything about a given building derives from a hash of its index, so it
+     * does not shimmer or reshuffle as the road scrolls — a building three blocks
+     * away must still be the same building when it arrives.
+     */
+    _drawStreet(L, scrollZ) {
+      const ctx = this.ctx;
+      const P = this.palette;
+      const zRef = L.zRef;
+      const SPACING = 9;            // road units between buildings
+      const hues = P.streetHues;
+
+      /* Integer hash. Stable per index, and cheap — this runs for every building
+       * every frame. */
+      const rnd = (i, salt) => {
+        let h = (i * 374761393 + salt * 668265263) | 0;
+        h = (h ^ (h >> 13)) * 1274126177 | 0;
+        return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+      };
+
+      const first = Math.floor(scrollZ / SPACING);
+      const count = Math.ceil(Z_FAR / SPACING) + 2;
+      // Far to near.
+      for (let k = count; k >= 0; k--) {
+        const idx = first + k;
+        const z = idx * SPACING - scrollZ;
+        /* Nothing nearer than this. A building at z~0 projects to several times
+         * the screen height and simply becomes a slab across the frame. */
+        if (z < 5 || z > Z_FAR) continue;
+        const s = zRef / (zRef + z);
+        const yBase = L.horizonY + (L.groundY - L.horizonY) * s;
+        const kerb = L.roadHalfW * s;
+
+        for (let side = -1; side <= 1; side += 2) {
+          const r0 = rnd(idx, side > 0 ? 1 : 2);
+          const r1 = rnd(idx, side > 0 ? 3 : 4);
+          const r2 = rnd(idx, side > 0 ? 5 : 6);
+          // Heights in road units so they shrink with depth like everything else.
+          const hUnits = 0.9 + r0 * 1.5;
+          const wUnits = 0.9 + r1 * 1.1;
+          const bw = wUnits * L.roadHalfW * s * 0.42;
+          const bh = hUnits * (L.groundY - L.horizonY) * s * 0.30;
+          /* A pavement between kerb and frontage, so the buildings do not crowd
+           * the road — in the reference there is clear ground either side. */
+          const xInner = L.cx + side * (kerb + L.roadHalfW * s * 0.10);
+          const x0 = side < 0 ? xInner - bw : xInner;
+
+          ctx.fillStyle = hues[Math.floor(r2 * hues.length) % hues.length];
+          ctx.fillRect(x0, yBase - bh, bw, bh);
+          /* A darker inner face so the row reads as a street with depth rather
+           * than as a flat row of rectangles. */
+          ctx.fillStyle = P.streetShade;
+          ctx.fillRect(side < 0 ? xInner - bw * 0.18 : xInner, yBase - bh,
+            bw * 0.18, bh);
+          // Rooftop nick, for silhouette variety.
+          if (r0 > 0.55) {
+            ctx.fillStyle = hues[Math.floor(r1 * hues.length) % hues.length];
+            const nw = bw * 0.4;
+            ctx.fillRect(x0 + (side < 0 ? 0 : bw - nw), yBase - bh - bh * 0.16,
+              nw, bh * 0.16);
+          }
+        }
+      }
     }
 
     /* --- scanline projection ------------------------------------------- */

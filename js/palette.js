@@ -45,6 +45,13 @@ window.HP = window.HP || {};
     hazeStrong: 'rgba(214, 238, 246, 0.95)',
     hazeClear: 'rgba(214, 238, 246, 0)',
 
+    /* --- the street ------------------------------------------------------
+     * Buildings flanking the road. Sampled from the skyline art so the near
+     * street and the distant city read as the same place. */
+    streetHues: ['#f2a9bd', '#f7c9a3', '#f6e3a8', '#a9dfc8', '#c3bde8',
+                 '#f0b7cd', '#bfe3d6', '#f5d3b0'],
+    streetShade: 'rgba(90, 105, 140, 0.20)',
+
     /* --- road, only used when the texture is missing -------------------- */
     road: '#b9c9d6',
     roadEdge: '#93a8ba',

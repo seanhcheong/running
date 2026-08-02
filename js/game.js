@@ -395,8 +395,28 @@ window.HP = window.HP || {};
    * is a cutout you cannot judge yourself against. Kept here as the single source
    * of truth rather than copied into wall-mode.js, which is how the two silently
    * drifted apart by 1.55x the first time. */
-  const AVATAR_DIVISOR = 104;   // laneW / this = the avatar's unit scale
-  const AVATAR_TORSO = 30;      // torso length in those units
+  /* Avatar sizing.
+   *
+   * Keyed to screen HEIGHT first, with a road-width cap. Height-first is what the
+   * reference framing needs: the character should read at about a third of the
+   * screen, and that is a statement about height, not about lane width. Keying it
+   * to laneW alone (as it was) made the avatar balloon to half the screen in
+   * landscape, because laneW is bounded by width there.
+   *
+   * The cap stops the character growing wider than the road it stands on when the
+   * viewport is very tall and narrow. */
+  /* Derived from the reference mockup by proportion rather than guessed: there the
+   * character's WIDTH is about 38% of the road's width, which is the measurement
+   * that matters — it is what decides whether the player can still see the lanes
+   * and the gate they are steering into. The blob is 1.9 torsos wide, so
+   * 1.9 * 30 * scale = 0.38 * 2 * roadHalfW  =>  scale = roadHalfW / 75.
+   *
+   * The height term is a cap for landscape, where roadHalfW is generous and the
+   * screen is short. Sizing by width alone put the avatar at 43% of the frame
+   * width and it occluded the road it was running on. */
+  const AVATAR_ROAD_DIV = 75;      // roadHalfW / this = unit scale
+  const AVATAR_HEIGHT_CAP = 330;   // H / this caps it on short viewports
+  const AVATAR_TORSO = 30;         // torso length in those units
 
   /* Phaser needs 0xRRGGBB numbers, so these are derived from HP.PALETTE rather
    * than written out again. One palette, three consumers — see js/palette.js. */
@@ -480,13 +500,40 @@ window.HP = window.HP || {};
        * to width alone makes both grotesquely large in landscape, where there is
        * lots of width and very little depth to draw into. */
       const depth = this.groundY - this.horizonY;
-      this.roadHalfW = Math.min(w * 0.46, depth * 0.62);
+      /* Narrower than before: the reference framing gives the road about two
+       * thirds of the screen and spends the outer thirds on the street. */
+      this.roadHalfW = Math.min(w * 0.36, depth * 0.62);
       this.laneW = this.roadHalfW / 1.5; // 3 lanes => lane centres at -1, 0, 1
+    }
+
+    /** The avatar's unit scale. Shared with the cutouts so a gate is the same
+     *  size as the character being steered into it. */
+    _avatarScale() {
+      return Math.min(this.roadHalfW / AVATAR_ROAD_DIV, this.H / AVATAR_HEIGHT_CAP);
     }
 
     /** Torso length in pixels at the player's own depth. One body-scale unit. */
     _torsoPx() {
-      return AVATAR_TORSO * (this.laneW / AVATAR_DIVISOR);
+      return AVATAR_TORSO * this._avatarScale();
+    }
+
+    /**
+     * The avatar's real drawn height in pixels, crown to foot.
+     *
+     * Exists so tests measure the character rather than re-deriving it: the
+     * responsive suite carried its own hardcoded formula from when the avatar was
+     * a jointed humanoid, and went on reporting that figure for a blob whose
+     * proportions are completely different. A renderer that can be asked its own
+     * size cannot drift from the thing checking it.
+     */
+    _avatarHeightPx() {
+      const m = HP.avatar.METRICS;
+      const torso = this._torsoPx();
+      const scale = this._avatarScale();
+      const body = (m.crownAbove + 1 + m.baseBelow) * torso;
+      // Legs run from the hip line down to the foot; the rig's legLen in units.
+      const legs = 30 * scale * m.legLength;
+      return body + legs;
     }
 
     /* --- projection ------------------------------------------------------- */
@@ -689,14 +736,7 @@ window.HP = window.HP || {};
       const sim = this.sim;
       g.clear();
 
-      /* Avatar size is keyed to lane width so it stays proportional to the road.
-       * The divisor is pure presence: smaller = a bigger runner. Obstacles size
-       * themselves off laneW independently, so this only moves the avatar.
-       *
-       * It went from 76 to 104 when the humanoid became a blob: the blob is about
-       * twice as wide per unit of torso, and at the old value it filled the road
-       * from edge to edge. */
-      const scale = this.laneW / AVATAR_DIVISOR;
+      const scale = this._avatarScale();
       const x = this._xAt(sim.lane - 1, 0);
       const jumpPx = sim.jumpHeight * this.H;
       const duck = sim.ducking ? 1 : 0;
