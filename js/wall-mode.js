@@ -378,11 +378,26 @@ window.HP = window.HP || {};
    * WallScene — extends RunScene so the sky, road, runner and fx are shared
    * rather than duplicated. Only the walls are new.
    * ======================================================================== */
+  /* Daylight gates.
+   *
+   * The holographic reference these were built from is a dark scene: a lit glass
+   * sheet with a near-black void punched through it. On a pale sky that inverts
+   * badly — the panel disappears and the void reads as a heavy black blob stuck
+   * to the road, which is what the first daylight render showed.
+   *
+   * So the treatment flips. The PANEL is now the opaque thing (frosted white) and
+   * the CUTOUT is the clear one, which is also physically what a gate is: you see
+   * through the hole and not through the glass. The rim still carries the
+   * grey/amber/green fit signal, because it is the one element with enough
+   * saturation to read at a distance either way.
+   *
+   * A true hole needs `destination-out` compositing, which Graphics cannot do —
+   * see the note on _drawWalls for why that is the next step. */
   const WALL_COLORS = {
-    frame: 0x8fe9ff,
-    glass: 0xbdf3ff,      // lit glass sheet; see the holographic gate reference
-    hole: 0x03040a,       // the void through the panel — darker than the sky
-    panel: 0x123048,
+    frame: 0x4fc4e8,
+    glass: 0xffffff,      // frosted sheet
+    hole: 0xeaf7fb,       // the clear opening: barely tinted, never dark
+    panel: 0xdff1f8,
     far: 0x6d7f9a,        // too far away to be judged yet
     miss: 0xff2b57,
     close: 0xffc23d,
@@ -431,8 +446,9 @@ window.HP = window.HP || {};
       const shakeY = this.shake ? (Math.random() * 2 - 1) * 7 * this.shake : 0;
       this.cameras.main.setScroll(shakeX, shakeY);
 
-      this._drawSky(time);
-      this._drawRoad();
+      /* Sky, ground and road come from the shared course renderer, same as the
+       * running mode — it is the same road. */
+      this._drawCourse();
       this._drawWalls();
       this._drawPlayer();
       this._drawFx();
@@ -486,7 +502,7 @@ window.HP = window.HP || {};
             alpha * 0.05 * b);
           g.strokeRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
         }
-        g.fillStyle(WALL_COLORS.glass, alpha * 0.17);
+        g.fillStyle(WALL_COLORS.glass, alpha * 0.46);
         g.fillRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
         g.lineStyle(rimW, WALL_COLORS.frame, alpha * 0.95);
         g.strokeRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
@@ -532,7 +548,10 @@ window.HP = window.HP || {};
            * that on each side leaves no void between them and a near gate's
            * arms-out cutout collapses into a solid bar. */
           rimWidth: Math.max(1.0, 1.7 * s),
-          alpha: 1,
+          /* Not opaque: the opening has to show the road through it, or it stops
+           * reading as an opening. Low enough that the frosted panel around it is
+           * clearly the more solid of the two. */
+          alpha: alpha * 0.30,
         });
 
         /* --- hold progress, drawn on the wall while passing through -------- */

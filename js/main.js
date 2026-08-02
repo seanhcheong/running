@@ -77,6 +77,7 @@ window.HP = window.HP || {};
     video: el('video'),
     debugCanvas: el('debugCanvas'),
     gameRoot: el('gameRoot'),
+    courseCanvas: el('courseCanvas'),
 
     hud: el('hud'),
     hudDistance: el('hudDistance'),
@@ -161,6 +162,10 @@ window.HP = window.HP || {};
    * STATE
    * ======================================================================== */
   const audio = new HP.Audio(CONFIG);
+  /* The world behind the game. Created once and shared by both scenes — the road
+   * is the same road in either mode. Art loads lazily and failure is fine: it
+   * falls back to flat colours. */
+  const course = new HP.Course(HP.PALETTE).attach(dom.courseCanvas);
   const sim = new HP.GameSim(CONFIG);
   const wallSim = new HP.WallSim(CONFIG);
 
@@ -537,6 +542,7 @@ window.HP = window.HP || {};
       ? new HP.WallScene({
           sim: wallSim,
           config: CONFIG,
+          course: course,
           // Auto-scrolling, so the runner's legs move at a steady jog rather
           // than at a measured cadence there is no longer any of.
           getCadence: () => 2.4,
@@ -544,6 +550,7 @@ window.HP = window.HP || {};
       : new HP.RunScene({
           sim: sim,
           config: CONFIG,
+          course: course,
           getCadence: () => sim.signals.cadence || 0,
         });
     game = new Phaser.Game({
@@ -1365,6 +1372,20 @@ window.HP = window.HP || {};
    * INIT
    * ======================================================================== */
   function init() {
+    /* Palette first: the stylesheet's custom properties come from HP.PALETTE, so
+     * anything measured or painted before this would use the wrong colours. */
+    HP.applyPaletteToCss();
+
+    /* Course art. Deliberately not awaited — the start screen must appear
+     * immediately, and the course renderer draws flat colours until (or unless)
+     * the tiles arrive. */
+    course.load({
+      roadTile: 'assets/course/road-tile.jpg',
+      skyline: 'assets/course/skyline.png',
+    }).then((got) => {
+      if (!got.roadTile) console.info('[HP] no road texture — using flat colours');
+    });
+
     wireSim();
     wireWallSim();
     wireButtons();

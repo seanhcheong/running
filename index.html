@@ -30,6 +30,11 @@
 <div id="stage">
   <video id="video" playsinline webkit-playsinline muted autoplay></video>
   <canvas id="debugCanvas" class="hidden"></canvas>
+  <!-- Sky, ground and the textured road. A plain 2D canvas rather than part of
+       the Phaser scene because projecting the road texture per scanline needs
+       drawImage with a source rect, which Graphics cannot express. Phaser draws
+       everything that moves on top of this. -->
+  <canvas id="courseCanvas"></canvas>
   <div id="gameRoot"></div>
 
   <!-- ---------------------------------------------------------------- HUD -->
@@ -254,6 +259,7 @@
 <script src="vendor/phaser.min.js"></script>
 
 <script src="js/config.js"></script>
+<script src="js/palette.js"></script>
 <script src="js/util.js"></script>
 <script src="js/one-euro-filter.js"></script>
 <script src="js/poses.js"></script>
@@ -261,6 +267,7 @@
 <script src="js/pose-tracker.js"></script>
 <script src="js/calibration.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/course.js"></script>
 <script src="js/game.js"></script>
 <script src="js/wall-mode.js"></script>
 <script src="js/main.js"></script>

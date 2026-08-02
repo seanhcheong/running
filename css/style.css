@@ -12,16 +12,22 @@
  * ========================================================================== */
 
 :root {
-  --bg: #05060f;
-  --ink: #eaf2ff;
-  --dim: #8c9bb5;
-  --accent: #3fffb4;
-  --accent-2: #39d9ff;
-  --warn: #ffc23d;
-  --danger: #ff2b57;
-  --violet: #b478ff;
-  --panel: rgba(8, 11, 24, 0.86);
-  --panel-line: rgba(120, 160, 220, 0.18);
+  /* These are FALLBACKS ONLY. js/palette.js overwrites every one of them at boot
+   * from HP.PALETTE, so that the HUD, the course canvas and the Phaser scene
+   * cannot disagree about a colour. Editing them here has no effect at runtime —
+   * edit js/palette.js. They stay so the page is not unstyled if JS is slow. */
+  --bg: #cfeaf4;
+  --ink: #243447;
+  --dim: #5b7186;
+  --accent: #1fb89a;
+  --accent-2: #3ba7d6;
+  --warn: #e08a2e;
+  --danger: #e0455f;
+  --violet: #8b6fd4;
+  --panel: rgba(255, 255, 255, 0.82);
+  --panel-line: rgba(60, 90, 120, 0.18);
+  --sky-top: #8fcfe8;
+  --sky-bottom: #cfeaf4;
 
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --num: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
@@ -123,13 +129,24 @@ body.cam-pip #video, body.cam-pip #debugCanvas {
   height: min(30vmin, 172px);
   border-radius: 12px;
   overflow: hidden;
-  opacity: 0.62;
+  opacity: 0.9;
   z-index: 4;
-  box-shadow: 0 0 0 1px var(--panel-line), 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85),
+              0 6px 18px rgba(40, 70, 100, 0.28);
 }
 
 /* Off entirely before the camera exists, and on the end screens. */
 body.cam-off #video, body.cam-off #debugCanvas { opacity: 0; }
+
+/* Sky, ground and road. Sits under the Phaser canvas, which is transparent, so
+   the two compose into one scene. pointer-events off: it is pure backdrop. */
+#courseCanvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  display: block;
+}
 
 #gameRoot {
   position: absolute;
@@ -182,7 +199,10 @@ body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
   font-weight: 700;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  /* A light halo, not a dark shadow: the ink is dark now and the background is
+     pale, so the job is to separate glyphs from a busy rainbow road rather than
+     to make bright type readable on black. */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75), 0 0 10px rgba(255, 255, 255, 0.9);
 }
 .hud-value .unit { font-size: 0.5em; color: var(--dim); margin-left: 2px; }
 
@@ -203,10 +223,11 @@ body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
 
 .gap-bar {
   height: clamp(10px, 1.8vmin, 16px);
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--panel-line);
   border-radius: 999px;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(40, 70, 100, 0.16);
 }
 
 .gap-fill {
@@ -237,10 +258,11 @@ body.cam-pip .pace-wrap { padding-right: 0; }
 .pace-bar {
   position: relative;
   height: clamp(14px, 2.6vmin, 22px);
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--panel-line);
   border-radius: 999px;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(40, 70, 100, 0.16);
 }
 
 .pace-fill {
@@ -435,8 +457,9 @@ body.cam-pip .pace-wrap { padding-right: 0; }
   width: auto;
   height: clamp(84px, 28vmin, 164px);
   margin: 0 auto 2px;
-  filter: drop-shadow(0 0 14px rgba(63, 255, 180, 0.30))
-          drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+  /* A soft contact shadow rather than a glow — the character is clay in a
+     daylit world now, not a neon sprite in the dark. */
+  filter: drop-shadow(0 10px 14px rgba(40, 70, 100, 0.28));
 }
 @media (max-height: 640px) {
   .hero-blob { display: none; }
@@ -766,10 +789,11 @@ body.cam-pip #wallHud .hud-top { padding-right: min(27vmin, 154px); }
 .fit-bar {
   position: relative;
   height: clamp(16px, 3vmin, 26px);
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--panel-line);
   border-radius: 999px;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(40, 70, 100, 0.16);
 }
 .fit-fill {
   height: 100%;

@@ -54,15 +54,21 @@ window.HP = window.HP || {};
   /* ===========================================================================
    * PALETTE
    * ---------------------------------------------------------------------------
-   * The reference art is a soft pastel teal (~#74c9c3). Used literally it loses
-   * most of its contrast against this game's near-black sky (#05060f) and dark
-   * road (#1b1c2e) — the avatar has to stay legible while it is the smallest
-   * bright thing on a moving background. So the hue is kept and the value is
-   * pushed up. Same character, lit for a night scene.
+   * Comes from HP.PALETTE, which now carries the reference clay teal (#74c9c3)
+   * as authored. An earlier build pushed its value up so it would survive a
+   * near-black sky; the world is daylight now, and that same brightening washes
+   * the character out against a pale ground. Source colour is correct again.
    * ======================================================================== */
+  const _P = HP.PALETTE, _N = HP.paletteNum;
   const SKIN = {
-    normal: { body: 0x6fdfd0, light: 0xb9fdf2, shade: 0x2f9d94, face: 0x08222c },
-    duck:   { body: 0x62d8ff, light: 0xb6ecff, shade: 0x2b7ea8, face: 0x08222c },
+    normal: {
+      body: _N(_P.blobBody), light: _N(_P.blobLight),
+      shade: _N(_P.blobShade), face: _N(_P.blobFace),
+    },
+    duck: {
+      body: _N(_P.blobDuckBody), light: _N(_P.blobDuckLight),
+      shade: _N(_P.blobDuckShade), face: _N(_P.blobFace),
+    },
   };
 
   /* ===========================================================================

@@ -398,30 +398,21 @@ window.HP = window.HP || {};
   const AVATAR_DIVISOR = 104;   // laneW / this = the avatar's unit scale
   const AVATAR_TORSO = 30;      // torso length in those units
 
+  /* Phaser needs 0xRRGGBB numbers, so these are derived from HP.PALETTE rather
+   * than written out again. One palette, three consumers — see js/palette.js. */
+  const P = HP.PALETTE;
+  const N = HP.paletteNum;
   const COLORS = {
-    skyTop: 0x05060f,
-    skyBottom: 0x141033,
-    horizonGlow: 0x3b2f7a,
-    ground: 0x0b0c18,
-    road: 0x1b1c2e,
-    roadEdge: 0x2f3350,
-    stripe: 0x39d9ff,
-    laneLine: 0x2a3f63,
-    player: 0x7dffb0,
-    playerDuck: 0x62d8ff,
-    // Back-view detail. The pack is near-black for maximum contrast against the
-    // bright body — it is the cue doing most of the work (see _drawPlayer).
-    playerPack: 0x0b1a2e,
-    playerCap: 0x39d9ff,
-    playerSole: 0xdff6ff,
-    playerLimb: 0x4fdd9b,
-    playerDuckLimb: 0x3fb6dd,
-    obstacleLane: 0xff4d9d,
-    obstacleLow: 0xffc23d,
-    obstacleHigh: 0xb478ff,
-    voidCore: 0x000000,
-    voidEdge: 0x8b1030,
-    voidGlow: 0xff2b57,
+    player: N(P.blobBody),
+    playerDuck: N(P.blobDuckBody),
+    playerSole: 0xfdfbf4,
+    obstacleLane: N(P.obstacleLane),
+    obstacleLow: N(P.obstacleLow),
+    obstacleHigh: N(P.obstacleHigh),
+    voidCore: N(P.voidCore),
+    voidEdge: N(P.voidEdge),
+    voidGlow: N(P.voidGlow),
+    ink: N(P.ink),
   };
 
   class RunScene extends Phaser.Scene {
@@ -431,6 +422,9 @@ window.HP = window.HP || {};
       this.getCadence = deps.getCadence || (() => 0);
       this.cfg = deps.config || HP.CONFIG;
       this.onStep = deps.onStep || null;
+      /* The world behind this scene (js/course.js). Optional so the scene can be
+       * constructed headlessly in tests without a canvas. */
+      this.course = deps.course || null;
 
       this.runPhase = 0;   // leg-swing phase, advanced by live cadence
       this.shake = 0;      // screen shake impulse, decays
@@ -441,6 +435,8 @@ window.HP = window.HP || {};
     }
 
     create() {
+      /* Kept so the layer order below is unchanged, but nothing draws to it any
+       * more: sky and ground moved to the course canvas underneath. */
       this.gSky = this.add.graphics();
       this.gRoad = this.add.graphics();
       this.gObstacles = this.add.graphics();
@@ -551,117 +547,45 @@ window.HP = window.HP || {};
       const shakeY = this.shake ? (Math.random() * 2 - 1) * 7 * this.shake : 0;
       this.cameras.main.setScroll(shakeX, shakeY);
 
-      this._drawSky(time);
-      this._drawRoad();
+      this._drawCourse(time);
       this._drawObstacles();
       this._drawPlayer();
       this._drawVoid();
       this._drawFx();
     }
 
-    _drawSky(time) {
-      const g = this.gSky;
-      g.clear();
-      // Vertical gradient, faked with a few bands (cheap and good enough).
-      const bands = 12;
-      for (let i = 0; i < bands; i++) {
-        const t = i / (bands - 1);
-        const c = Phaser.Display.Color.Interpolate.ColorWithColor(
-          Phaser.Display.Color.ValueToColor(COLORS.skyTop),
-          Phaser.Display.Color.ValueToColor(COLORS.skyBottom),
-          100, t * 100
-        );
-        g.fillStyle(Phaser.Display.Color.GetColor(c.r, c.g, c.b), 1);
-        g.fillRect(0, (this.horizonY / bands) * i - 1, this.W, this.horizonY / bands + 2);
-      }
+    /**
+     * The sky, ground and road now live on their own canvas beneath this one
+     * (js/course.js), because projecting a texture per scanline needs drawImage
+     * and Graphics cannot do it. This method's only job is to hand the course
+     * renderer the SAME layout numbers this scene projects with — passing them
+     * rather than recomputing them is what stops the two drifting apart.
+     */
+    _drawCourse() {
+      const course = this.course;
+      if (!course) return;
+      const speedNorm = clamp(
+        this.sim.speed / (this.cfg.game.speedAtTargetPace * 1.4), 0, 1);
+      course.resize(this.W, this.H);
+      course.draw({
+        W: this.W, H: this.H, cx: this.cx,
+        horizonY: this.horizonY, groundY: this.groundY,
+        roadHalfW: this.roadHalfW, zRef: PROJ_ZREF,
+      }, this.sim.distance, speedNorm);
 
-      /* Ground plane. The road converges at its own zFar, which is still well
-       * short of the horizon line, so without this fill the band between them
-       * shows the page background as a visible seam across the screen. */
-      g.fillStyle(COLORS.ground, 1);
-      g.fillRect(0, this.horizonY - 1, this.W, this.H - this.horizonY + 1);
-
-      // Stars
-      for (let i = 0; i < this.stars.length; i++) {
-        const st = this.stars[i];
-        const a = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(time * 0.002 + st.tw));
-        g.fillStyle(0xffffff, a);
-        g.fillCircle(st.x * this.W, st.y * this.horizonY, st.r);
-      }
-
-      // Horizon glow — brighter the faster you're going, so speed reads even
-      // when you're too winded to look at the HUD. Kept flat so it straddles the
-      // horizon line rather than floating in the sky as a blob.
-      const speedNorm = clamp(this.sim.speed / (this.cfg.game.speedAtTargetPace * 1.4), 0, 1);
-      g.fillStyle(COLORS.horizonGlow, 0.25 + speedNorm * 0.4);
-      g.fillEllipse(this.cx, this.horizonY, this.W * 0.9, this.H * 0.05);
-    }
-
-    _drawRoad() {
+      /* Overdrive streaks stay here rather than in the course: they are a
+       * readout of the player's effort, not scenery. */
       const g = this.gRoad;
-      const cfg = this.cfg.game;
       g.clear();
-
-      const zFar = 120;
-      const sFar = this._scaleAt(zFar);
-      const yFar = this._yAt(zFar);
-      const yNear = this.groundY;
-
-      // Road surface
-      g.fillStyle(COLORS.road, 1);
-      g.beginPath();
-      g.moveTo(this.cx - this.roadHalfW, yNear);
-      g.lineTo(this.cx + this.roadHalfW, yNear);
-      g.lineTo(this.cx + this.roadHalfW * sFar, yFar);
-      g.lineTo(this.cx - this.roadHalfW * sFar, yFar);
-      g.closePath();
-      g.fillPath();
-
-      // Road edges
-      g.lineStyle(2, COLORS.roadEdge, 0.9);
-      g.beginPath();
-      g.moveTo(this.cx - this.roadHalfW, yNear);
-      g.lineTo(this.cx - this.roadHalfW * sFar, yFar);
-      g.strokePath();
-      g.beginPath();
-      g.moveTo(this.cx + this.roadHalfW, yNear);
-      g.lineTo(this.cx + this.roadHalfW * sFar, yFar);
-      g.strokePath();
-
-      // Lane divider lines
-      g.lineStyle(1.5, COLORS.laneLine, 0.65);
-      [-0.5, 0.5].forEach((off) => {
-        g.beginPath();
-        g.moveTo(this._xAt(off, 0), yNear);
-        g.lineTo(this._xAt(off, zFar), yFar);
-        g.strokePath();
-      });
-
-      /* Transverse stripes scrolling toward the player: the primary sense of
-       * speed. Their positions come from distance travelled, so they scroll at
-       * exactly the rate the sim says you're moving. */
-      const spacing = 12;
-      const phase = this.sim.distance % spacing;
-      for (let n = 0; n < 12; n++) {
-        const z = n * spacing - phase;
-        if (z < 0 || z > zFar) continue;
-        const s = this._scaleAt(z);
-        const y = this._yAt(z);
-        const thickness = Math.max(1, 8 * s);
-        g.fillStyle(COLORS.stripe, 0.10 + 0.35 * s);
-        g.fillRect(this.cx - this.roadHalfW * s, y, this.roadHalfW * 2 * s, thickness);
-      }
-
-      // Speed streaks at the sides when in overdrive.
       const over = clamp((this.sim.signals.paceRatio - 1) / 0.8, 0, 1);
       if (over > 0.02) {
-        g.fillStyle(0x9fe8ff, 0.18 * over);
+        g.fillStyle(N(P.accent2), 0.22 * over);
         for (let i = 0; i < 8; i++) {
           const t = (this.sim.distance * 3 + i * 37) % 100 / 100;
-          const y = this.horizonY + t * (this.H - this.horizonY);
-          const len = 40 + t * 120;
-          g.fillRect(0, y, len, 2);
-          g.fillRect(this.W - len, y + 13, len, 2);
+          const y = this.groundY - t * (this.groundY - this.horizonY) * 0.9;
+          const w = 26 * (1 - t) + 4;
+          g.fillRect(4, y, w, 2);
+          g.fillRect(this.W - 4 - w, y, w, 2);
         }
       }
     }
@@ -677,7 +601,11 @@ window.HP = window.HP || {};
         if (o.z < -4 || o.z > 120) continue;
         const s = this._scaleAt(o.z);
         const yBase = this._yAt(o.z);
-        const alpha = clamp(s * 3.2, 0.15, 1);
+        /* Fade into the course canvas's horizon haze rather than popping out of
+         * it. The haze covers the road's nearest 42% of depth, so an obstacle's
+         * visibility has to track s/0.42 or a distant hurdle sits crisply on top
+         * of a road that is washed out behind it — which reads as a bug. */
+        const alpha = clamp(s / 0.42, 0.06, 1);
 
         if (o.kind === 'lane') {
           const w = this.laneW * s * 0.86;
@@ -746,6 +674,16 @@ window.HP = window.HP || {};
      * supports because all its proportions are multiples of torso length rather
      * than absolute units.
      */
+    /* --- the runner -------------------------------------------------------
+     * Drawn by js/avatar.js from a set of joints, the same way the wall cutouts
+     * and the fit meter are, so the thing you control and the thing you are told
+     * to match are visibly the same character. That leaves this method with one
+     * job: turn the run rig — stride, arm swing, bob, lean — into joints.
+     *
+     * The joints are in PIXELS with an identity plot, which the avatar module
+     * supports because all its proportions are multiples of torso length rather
+     * than absolute units.
+     */
     _drawPlayer() {
       const g = this.gPlayer;
       const sim = this.sim;
@@ -785,11 +723,17 @@ window.HP = window.HP || {};
       // Blink while invulnerable so a hit is unmistakable.
       const alpha = invuln ? (Math.floor(sim.t * 14) % 2 ? 0.35 : 1) : 1;
 
-      /* Shadow shrinks as you rise — the only cue that reads as "airborne". */
+      /* Shadow shrinks as you rise — the only cue that reads as "airborne".
+       * Two stacked ellipses rather than one: on a bright, busy road a single
+       * flat ellipse reads as a sticker, and a soft outer falloff is what makes
+       * the character look like it is standing ON the road rather than over it. */
       const shadowScale = 1 - clamp(jumpPx / (this.H * 0.2), 0, 0.72);
-      g.fillStyle(0x000000, 0.42 * shadowScale);
+      g.fillStyle(COLORS.ink, 0.12 * shadowScale);
       g.fillEllipse(x, this.groundY + 3 * scale,
-        36 * scale * shadowScale, 9 * scale * shadowScale);
+        50 * scale * shadowScale, 14 * scale * shadowScale);
+      g.fillStyle(COLORS.ink, 0.26 * shadowScale);
+      g.fillEllipse(x, this.groundY + 3 * scale,
+        32 * scale * shadowScale, 8 * scale * shadowScale);
 
       const joints = {
         nose: [sx + tilt * 0.25, shoulderY - 0.45 * torsoH],
