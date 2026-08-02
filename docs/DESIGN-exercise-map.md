@@ -6,6 +6,13 @@ burpees, lunges, squats, jacks — without breaking what already works.
 Status: **design, not built.** Nothing in `js/` implements this yet. Written to
 be argued with before any code exists.
 
+Companion doc: [`DESIGN-wall-mode.md`](./DESIGN-wall-mode.md) specs the
+auto-scrolling pose-wall mode. That mode dissolves both problems this one fights
+hardest — the tempo limit in §1 and the framing conflict in §2 — because the
+level sets the speed and the camera only ever needs one aim. If you are choosing
+what to build, start there; this doc remains the reference for which exercises
+are detectable at all, which applies to both modes.
+
 ---
 
 ## 1. The problem this has to solve first
