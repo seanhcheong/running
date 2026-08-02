@@ -80,6 +80,7 @@ window.HP = window.HP || {};
     calibProgressLabel: el('calibProgressLabel'),
     calibHint: el('calibHint'),
     calibCadence: el('calibCadence'),
+    btnCalibDebug: el('btnCalibDebug'),
     btnCalibSkip: el('btnCalibSkip'),
     btnCalibCancel: el('btnCalibCancel'),
     countdown: el('countdown'),
@@ -729,6 +730,7 @@ window.HP = window.HP || {};
   function setDebug(on) {
     debugOn = !!on;
     dom.btnDebug.classList.toggle('active', debugOn);
+    dom.btnCalibDebug.classList.toggle('active', debugOn);
     if (debugOn) {
       util.show(dom.debugCanvas);
       util.show(dom.debugPanel);
@@ -831,6 +833,8 @@ window.HP = window.HP || {};
       toStartScreen();
     });
 
+    // Reachable during calibration, unlike the HUD's DEBUG button.
+    dom.btnCalibDebug.addEventListener('click', () => setDebug(!debugOn));
     dom.btnCalibSkip.addEventListener('click', () => calibration && calibration.skipCurrentStep());
     dom.btnCalibCancel.addEventListener('click', () => calibration && calibration.abort());
 

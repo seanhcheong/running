@@ -132,6 +132,12 @@
       </div>
 
       <div class="calib-actions">
+        <!-- The skeleton overlay is most useful HERE, while the player is trying
+             to fix their framing — but the DEBUG button lives in the HUD, which
+             is hidden until the run starts. Without this, the overlay was
+             unreachable on a phone during calibration. -->
+        <button id="btnCalibDebug" class="ghost-btn" type="button"
+                aria-label="Toggle skeleton overlay">Skeleton</button>
         <button id="btnCalibSkip" class="ghost-btn hidden" type="button">Skip</button>
         <button id="btnCalibCancel" class="ghost-btn" type="button">Cancel</button>
       </div>
