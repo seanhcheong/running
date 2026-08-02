@@ -40,7 +40,7 @@ player stands at 78–84%, and the road is three lanes wide with
 | | |
 |---|---|
 | View | Orthographic top-down (nadir). No vanishing point, no horizon in frame. |
-| Aspect | 1:1 |
+| Aspect | 9:16 — vertical is the travel direction, so a tall tile gives more track per loop. 1:1 also works. |
 | Tiling | Must continue off the top edge onto the bottom edge — that is the travel direction and it loops forever. |
 | Lanes | Dividers at exactly ⅓ and ⅔ of the image width, so lane centres land on ⅙, ½, ⅚. |
 | Value | Very dark. The current road is `#1b1c2e`; a daylit texture blows out the whole scene. Greyscale is also fine — it gets tinted. |
