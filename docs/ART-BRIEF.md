@@ -102,27 +102,31 @@ Opaque assets (the road tile, an opaque horizon) can be JPEG.
 
 ## Prompts
 
-Append this to every prompt for a consistent look:
+Self-contained — paste one whole block, no assembly. Aspect ratio is per prompt.
 
-> **STYLE:** dark neon holographic, near-black background, cyan and mint
-> emissive accents, deep violet ambient glow, clean minimal geometric forms,
-> high contrast, low-key lighting, no text, no watermark, no logos, no people,
-> no characters, no creatures.
+**Do the road tile first and on its own.** It changes the course more than the
+other three combined, and it is the one most likely to need several attempts.
 
-### Road tile — aspect 1:1
+### 1. Road tile — aspect 9:16
+
+Vertical rather than square on purpose: vertical is the travel direction, so a
+tall tile gives more track per loop.
 
 > Orthographic top-down plan view, camera pointing straight down from directly
-> overhead at a three-lane futuristic running track, nadir drone shot, absolutely
-> no perspective and no horizon visible anywhere in the frame. The track fills
-> the entire image edge to edge and runs vertically from the top edge to the
-> bottom edge. Two thin glowing cyan lane divider lines run vertically, dividing
-> the width into three equal lanes. Dark charcoal-violet track surface with a
-> subtle fine grid texture, and faint emissive strips along the far left and far
-> right edges. The pattern continues smoothly off the top edge and onto the
-> bottom edge — seamlessly tileable vertically, no visible seam. Very dark
-> overall. **+ STYLE**
+> overhead at a three-lane futuristic running track, nadir drone shot,
+> absolutely no perspective and no horizon visible anywhere in the frame. The
+> track fills the entire image edge to edge and runs vertically from the top
+> edge to the bottom edge. Two thin glowing cyan lane divider lines run
+> vertically, dividing the width into three equal lanes. Dark charcoal-violet
+> track surface with a subtle fine grid texture, and faint emissive strips along
+> the far left and far right edges. The pattern continues smoothly off the top
+> edge and onto the bottom edge — seamlessly tileable vertically, no visible
+> seam. Very dark overall. Style: dark neon holographic, near-black, cyan and
+> mint emissive accents, deep violet ambient glow, clean minimal geometric
+> forms, high contrast, low-key lighting. No text, no watermark, no logos, no
+> people, no characters, no creatures.
 
-### Horizon backdrop — aspect 16:9 or wider
+### 2. Horizon backdrop — aspect 16:9
 
 > A wide panoramic silhouette of a distant futuristic city skyline at night,
 > viewed straight on at eye level from very far away, completely flat with no
@@ -131,9 +135,11 @@ Append this to every prompt for a consistent look:
 > lines, deep violet atmospheric haze glowing low along the base of the
 > buildings. The upper two thirds of the frame is pure flat solid black empty
 > sky with absolutely nothing in it. Extremely dark, distant, hazy, high
-> contrast. **+ STYLE**
+> contrast. Style: dark neon holographic, cyan and mint emissive accents, deep
+> violet ambient glow, clean minimal geometric forms, low-key lighting. No text,
+> no watermark, no logos, no people, no characters, no creatures.
 
-### Roadside props — aspect 1:1
+### 3. Roadside props — aspect 16:9
 
 > A neat reference sheet grid of eight separate futuristic roadside objects, each
 > object isolated with clear empty space all around it, on a completely flat
@@ -144,10 +150,12 @@ Append this to every prompt for a consistent look:
 > lamp with a cyan lamp head; a floating ring hovering above a short post; an
 > angular pylon; an empty holographic billboard frame; a cluster of three
 > vertical light rods; a low geometric barrier block. Dark charcoal bodies with
-> cyan and mint emissive edge lighting. **+ STYLE** (drop "near-black
-> background" — the background must stay magenta)
+> cyan and mint emissive edge lighting. Style: dark neon holographic, cyan and
+> mint emissive accents, clean minimal geometric forms, high contrast. Keep the
+> background a perfectly flat solid magenta with no shading and no gradient. No
+> text, no watermark, no logos, no people, no characters, no creatures.
 
-### Obstacles — aspect 16:9
+### 4. Obstacles — aspect 16:9
 
 > A reference sheet of three separate futuristic running-track obstacles
 > arranged in a single row, each isolated with clear empty space around it, on a
@@ -160,7 +168,10 @@ Append this to every prompt for a consistent look:
 > duck below.
 > RIGHT: a tall narrow barrier — a full-height glowing pink slab, narrow enough
 > to block only one lane of three, obviously something to step around.
-> Dark bodies, bright emissive edges. **+ STYLE** (drop "near-black background")
+> Dark bodies with bright emissive edges. Style: dark neon holographic, clean
+> minimal geometric forms, high contrast. Keep the background a perfectly flat
+> solid magenta with no shading and no gradient. No text, no watermark, no
+> logos, no people, no characters, no creatures.
 
 ---
 
