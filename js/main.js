@@ -51,6 +51,13 @@ window.HP = window.HP || {};
   const SIM_POSE_KEYS = ['stand_tall', 'squat_bottom', 'star', 't_pose',
                          'knee_up_left', 'knee_up_right'];
 
+  /** "1 STAND TALL · 2 SQUAT · …" — built from the list above so the legend can
+   *  never drift out of step with the keys that are actually bound. */
+  function simPoseLegend(sep) {
+    return SIM_POSE_KEYS.map((id, i) => (i + 1) + ' ' +
+      (HP.POSES && HP.POSES[id] ? HP.POSES[id].label : id)).join(sep || ' · ');
+  }
+
   /* ===========================================================================
    * DOM
    * ======================================================================== */
@@ -93,6 +100,7 @@ window.HP = window.HP || {};
     fitStatus: el('fitStatus'),
     btnWallDebug: el('btnWallDebug'),
     btnWallQuit: el('btnWallQuit'),
+    wallSimKeys: el('wallSimKeys'),
 
     screenStart: el('screenStart'),
     btnStart: el('btnStart'),
@@ -688,6 +696,10 @@ window.HP = window.HP || {};
     util.hide(dom.hud);
     util.show(dom.wallHud);
     setCameraMode(SIM_MODE ? 'off' : 'pip');
+    if (SIM_MODE) {
+      dom.wallSimKeys.innerHTML = 'HOLD ' + simPoseLegend();
+      util.show(dom.wallSimKeys);
+    }
 
     // Threshold marker, same idea as the pace meter's comfortable-pace line.
     dom.fitTarget.style.left = (wallSim.fitThreshold() * 100).toFixed(1) + '%';
@@ -1173,7 +1185,15 @@ window.HP = window.HP || {};
       setDebug(!debugOn);
       return;
     }
-    if (!SIM_MODE) return;
+    /* The number keys are a stand-in for the CAMERA, so they are deliberately
+     * inert once the camera is the thing driving the pose. Silence read as "the
+     * keys are broken", so say which it is instead of ignoring the press. */
+    if (!SIM_MODE) {
+      if (mode === 'wall' && phase === 'running' && /^[1-9]$/.test(e.key)) {
+        showWallToast('KEYS NEED ?sim=1', 'hit', 1400);
+      }
+      return;
+    }
 
     /* Wall Mode: a number key stands in for holding a pose. Held, not tapped —
      * the wall wants the shape sustained through contact, and the sim should
@@ -1322,13 +1342,17 @@ window.HP = window.HP || {};
     // and skeleton are most useful DURING calibration, which is when framing and
     // lighting problems actually get diagnosed.
     startHudLoop();
+    /* Both key sets, always — the start screen offers both modes, so keying the
+     * legend off START_MODE told anyone who *clicked* WALL MODE about the wrong
+     * controls and left 1–6 undiscoverable. */
     if (SIM_MODE) {
       util.show(dom.simNote);
-      dom.simNote.innerHTML = START_MODE === 'wall'
-        ? 'SIM MODE — hold <kbd>1</kbd>–<kbd>6</kbd> to "be" a pose: ' +
-          SIM_POSE_KEYS.map((id, i) => (i + 1) + ' ' +
-            (HP.POSES[id] ? HP.POSES[id].label : id)).join(', ')
-        : dom.simNote.innerHTML;
+      dom.simNote.innerHTML =
+        'SIM MODE — no camera.<br>' +
+        '<b>RUN:</b> <kbd>↑</kbd>/<kbd>↓</kbd> pace, <kbd>←</kbd><kbd>→</kbd> ' +
+        'lane, <kbd>Space</kbd> jump, <kbd>Shift</kbd> duck<br>' +
+        '<b>WALL:</b> hold <kbd>1</kbd>–<kbd>6</kbd> to "be" a pose — ' +
+        simPoseLegend(', ');
     }
     setCameraMode('off');
     showScreen('screenStart');

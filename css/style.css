@@ -425,6 +425,17 @@ body.cam-pip .pace-wrap { padding-right: 0; }
 .perm-note { margin-top: 14px; margin-bottom: 0; }
 .sim-note { margin-top: 10px; color: var(--warn); }
 
+/* In-play key legend for sim mode. Sits under the fit meter so it reads as a
+ * footnote, not as game state the player has to track. */
+.sim-keys {
+  margin: 6px 0 0;
+  font: 600 clamp(8px, 1.7vmin, 10px)/1.4 var(--font);
+  letter-spacing: 0.06em;
+  color: var(--warn);
+  text-align: center;
+  opacity: 0.75;
+}
+
 kbd {
   font: 600 0.9em var(--num);
   background: rgba(255, 255, 255, 0.1);
