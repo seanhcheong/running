@@ -42,39 +42,73 @@ const OUT_DIR = path.join(ROOT, 'assets', 'sprites');
 const MAX_EDGE = 256;
 const PORT = 8123;
 
-/* Grid position -> name, read off the sheet. Row 1 carries no printed labels. */
-const NAMES = [
-  ['standing', 'running_front', 'running_back'],
-  ['step_front', 'running_side', 'running_back_road'],
-  ['burpee_down', 'squat_down_side', 'hands_down_plant'],
-  ['plank', 'mid_push_up', 'recovery_upward'],
-  ['jumping', 'clap', 'stretching'],
+/* ===========================================================================
+ * SHEETS
+ * ---------------------------------------------------------------------------
+ * Both source sheets happen to be keyable the same way — the character is teal
+ * and neither the white grid page nor the magenta backdrop falls inside a teal
+ * hue window — so one slicer serves both and only the grid and the naming
+ * differ.
+ *
+ * Cells are assigned by GRID POSITION (row = floor(cy*rows), col = floor(cx*cols))
+ * rather than by sort order. Sorting by centroid looked equivalent and is not:
+ * on the state sheet the airborne jump frame sits higher in its row than its
+ * neighbours, so a cy-dominant sort interleaved row 1 and put the names one cell
+ * out. Grid assignment cannot do that.
+ * ======================================================================== */
+const SHEETS = [
+  {
+    match: /blob_character.*\.(jpe?g|png)$/i,
+    rows: 5, cols: 3,
+    names: [
+      ['standing', 'running_front', 'running_back'],
+      ['step_front', 'running_side', 'running_back_road'],
+      ['burpee_down', 'squat_down_side', 'hands_down_plant'],
+      ['plank', 'mid_push_up', 'recovery_upward'],
+      ['jumping', 'clap', 'stretching'],
+    ],
+    /* The rest of this sheet is either a side/three-quarter view (unusable as a
+     * front-facing pose), a floor pose the matcher cannot yet handle, or a
+     * composed scene rather than a character. */
+    keep: ['standing', 'burpee_down', 'recovery_upward', 'clap', 'stretching',
+           'jumping', 'running_back'],
+  },
+  {
+    match: /Penguin_reference_sheet.*\.(jpe?g|png)$/i,
+    rows: 3, cols: 3,
+    /* Named from what the sheet actually contains, which is not what was asked
+     * for. The top row was meant to be three stride phases; measured pairwise
+     * silhouette difference came out at 0.4-0.7%, i.e. the same render three
+     * times. From directly behind, the body occludes the legs, so a stride is
+     * nearly invisible at this camera angle — which is why the runner stays
+     * procedural and only the DISCRETE states are taken from art. */
+    names: [
+      ['state-idle', 'idle_b', 'idle_c'],
+      ['state-dive', 'state-jump', 'idle_d'],
+      ['state-duck', 'state-hit', 'idle_e'],
+    ],
+    /* state-idle ships not to be drawn but to be MEASURED: every state sprite is
+     * scaled by (procedural avatar height / idle sprite height) so the character
+     * does not change size when the game switches between a drawn frame and the
+     * procedural stride. Without a reference pose there is no way to compute
+     * that factor, and the sheet's own scale would have to be hardcoded. */
+    keep: ['state-jump', 'state-duck', 'state-hit', 'state-idle'],
+  },
 ];
 
-/* Only these ship. The rest of the sheet is either a side/three-quarter view
- * (unusable as a front-facing pose), a floor pose the matcher cannot yet handle,
- * or a composed scene rather than a character. Listed explicitly so that adding
- * one later is a deliberate act. */
-const KEEP = new Set([
-  'standing',          // start screen, and the stand_tall shape
-  'burpee_down',       // squat
-  'recovery_upward',   // arms overhead
-  'clap',
-  'stretching',        // side bend; mirror for the other side
-  'jumping',
-  'running_back',      // the game's own camera angle
-]);
-
-function findSheet() {
+function sheetsPresent() {
   const dir = path.join(ROOT, 'resources');
   if (!fs.existsSync(dir)) throw new Error('no resources/ directory');
-  const hit = fs.readdirSync(dir).find((f) => /blob_character.*\.(jpe?g|png)$/i.test(f));
-  if (!hit) throw new Error('no character sheet found in resources/');
-  return hit;
+  const files = fs.readdirSync(dir);
+  const found = [];
+  for (const spec of SHEETS) {
+    const hit = files.filter((f) => spec.match.test(f)).sort().pop();
+    if (hit) found.push(Object.assign({}, spec, { file: hit }));
+  }
+  if (!found.length) throw new Error('no recognised sheets in resources/');
+  return found;
 }
 
-/* A throwaway static server. The canvas has to be same-origin with the image or
- * getImageData refuses on a tainted canvas, and file:// does not qualify. */
 function serve() {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
@@ -206,36 +240,47 @@ function sliceInPage(arg) {
       }
       cctx.putImageData(dst, 0, 0);
 
-      // Downscale on the way out. Browser resampling is area-averaged, which is
-      // also a free second pass at softening JPEG edge ringing.
-      let final = cut;
-      const longest = Math.max(w, h);
-      if (longest > maxEdge) {
-        const s = maxEdge / longest;
-        const sc = document.createElement('canvas');
-        sc.width = Math.max(1, Math.round(w * s));
-        sc.height = Math.max(1, Math.round(h * s));
-        const sctx = sc.getContext('2d');
-        sctx.imageSmoothingEnabled = true;
-        sctx.imageSmoothingQuality = 'high';
-        sctx.drawImage(cut, 0, 0, sc.width, sc.height);
-        final = sc;
-      }
-
+      // Downscaling is deferred: see the shared-scale pass below.
       out.push({
         area: k.area,
         cx: (k.minX + k.maxX) / 2,
         cy: (k.minY + k.maxY) / 2,
-        w: final.width, h: final.height,
-        png: final.toDataURL('image/png'),
+        canvas: cut,
       });
     }
-    return { W, H, sprites: out };
+
+    /* ONE scale factor for the whole sheet, not one per cell.
+     *
+     * Scaling each cell to its own 256px longest edge destroys the RELATIVE size
+     * of the poses — a crouch and a jump would come out the same height, and the
+     * character would visibly pulse as the game switched between them. The whole
+     * point of asking for a locked-off camera was to preserve those relative
+     * sizes; normalising per cell would throw that away at the last step. */
+    let widest = 1;
+    for (const o of out) widest = Math.max(widest, o.canvas.width, o.canvas.height);
+    const shared = Math.min(1, maxEdge / widest);
+
+    const sprites = out.map((o) => {
+      let c = o.canvas;
+      if (shared < 1) {
+        const sc = document.createElement('canvas');
+        sc.width = Math.max(1, Math.round(c.width * shared));
+        sc.height = Math.max(1, Math.round(c.height * shared));
+        const sctx = sc.getContext('2d');
+        sctx.imageSmoothingEnabled = true;
+        sctx.imageSmoothingQuality = 'high';
+        sctx.drawImage(c, 0, 0, sc.width, sc.height);
+        c = sc;
+      }
+      return { area: o.area, cx: o.cx, cy: o.cy, w: c.width, h: c.height,
+               png: c.toDataURL('image/png') };
+    });
+    return { W, H, sheetScale: +shared.toFixed(4), sprites: sprites };
   })();
 }
 
 (async () => {
-  const sheet = findSheet();
+  const sheets = sheetsPresent();
   const srv = await serve();
   const { chromium } = require('/opt/node22/lib/node_modules/playwright');
   const browser = await chromium.launch({
@@ -247,26 +292,34 @@ function sliceInPage(arg) {
     const page = await browser.newPage();
     const base = 'http://127.0.0.1:' + PORT + '/';
     await page.goto(base, { waitUntil: 'load' });
-    const url = base + 'resources/' + encodeURIComponent(sheet);
-    const res = await page.evaluate(sliceInPage, { src: url, maxEdge: MAX_EDGE });
-
     fs.mkdirSync(OUT_DIR, { recursive: true });
-    const cellW = res.W / 3, cellH = res.H / 5;
-    let kept = 0, skipped = [];
-    for (const s of res.sprites) {
-      const col = Math.min(2, Math.floor(s.cx / cellW));
-      const row = Math.min(4, Math.floor(s.cy / cellH));
-      const name = NAMES[row][col];
-      if (!KEEP.has(name)) { skipped.push(name); continue; }
-      const file = path.join(OUT_DIR, name + '.png');
-      fs.writeFileSync(file, Buffer.from(s.png.split(',')[1], 'base64'));
-      kept++;
-      console.log('  ' + name.padEnd(18) + s.w + 'x' + s.h + '  ' +
-        (fs.statSync(file).size / 1024).toFixed(0) + 'KB');
+
+    for (const spec of sheets) {
+      const url = base + 'resources/' + encodeURIComponent(spec.file);
+      const res = await page.evaluate(sliceInPage, { src: url, maxEdge: MAX_EDGE });
+      console.log('\n' + spec.file);
+      console.log('  ' + res.sprites.length + ' components in a ' +
+        spec.rows + 'x' + spec.cols + ' grid, all scaled by ' + res.sheetScale +
+        ' (one factor per sheet, so relative pose sizes survive)');
+
+      const cellW = res.W / spec.cols, cellH = res.H / spec.rows;
+      const kept = [], skipped = [];
+      for (const s of res.sprites) {
+        const col = Math.min(spec.cols - 1, Math.floor(s.cx / cellW));
+        const row = Math.min(spec.rows - 1, Math.floor(s.cy / cellH));
+        const name = spec.names[row][col];
+        if (spec.keep.indexOf(name) < 0) { skipped.push(name); continue; }
+        const file = path.join(OUT_DIR, name + '.png');
+        fs.writeFileSync(file, Buffer.from(s.png.split(',')[1], 'base64'));
+        kept.push('  ' + name.padEnd(18) + s.w + 'x' + s.h + '  ' +
+          (fs.statSync(file).size / 1024).toFixed(0) + 'KB');
+      }
+      kept.sort().forEach((l) => console.log(l));
+      if (skipped.length) {
+        console.log('  not shipped: ' + skipped.sort().join(', '));
+      }
     }
-    console.log('\n' + sheet + ' (' + res.W + 'x' + res.H + ') -> ' +
-      kept + ' sprites in assets/sprites/');
-    console.log('not shipped (see KEEP): ' + skipped.sort().join(', '));
+    console.log('\n-> assets/sprites/');
   } finally {
     await browser.close();
     srv.close();

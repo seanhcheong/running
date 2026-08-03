@@ -693,7 +693,46 @@ window.HP = window.HP || {};
     };
   }
 
+  /* ===========================================================================
+   * STATE SPRITES
+   * ---------------------------------------------------------------------------
+   * The rendered character, used for the DISCRETE states only — jump, duck, hit.
+   * The run cycle stays procedural, and that is a measured decision rather than
+   * a shortcut: the game's camera is behind the character, and from directly
+   * behind the body occludes the legs. Three commissioned stride frames came
+   * back differing by 0.4-0.7% of their silhouettes, i.e. indistinguishable. A
+   * back-view run has to be sold by body motion — bob, sway, squash,
+   * counter-rotation — which is exactly what a rig does and a still cannot.
+   *
+   * Discrete states are the opposite case: one pose, held, no interpolation. A
+   * single rendered frame is strictly better than anything drawn from ellipses.
+   *
+   * Nothing here is required. Every method degrades to "not available" so the
+   * procedural path still covers every state on its own.
+   * ======================================================================== */
+  const states = {
+    imgs: {},
+    /** Never rejects; a missing sprite simply leaves that state procedural. */
+    load(names, dir) {
+      const base = dir || 'assets/sprites/';
+      return Promise.all(names.map((n) => new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => { states.imgs[n] = img; resolve(n); };
+        img.onerror = () => resolve(null);
+        img.src = base + n + '.png';
+      }))).then((r) => r.filter(Boolean));
+    },
+    has(name) { return !!states.imgs[name]; },
+    get(name) { return states.imgs[name] || null; },
+    /** Height of the reference pose, for scaling every other state to match. */
+    refHeight() {
+      const idle = states.imgs['state-idle'];
+      return idle ? idle.naturalHeight : 0;
+    },
+  };
+
   HP.avatar = {
+    states: states,
     SKIN: SKIN,
     METRICS: METRICS,
     phaserOps: phaserOps,

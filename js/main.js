@@ -1379,6 +1379,16 @@ window.HP = window.HP || {};
     /* Course art. Deliberately not awaited — the start screen must appear
      * immediately, and the course renderer draws flat colours until (or unless)
      * the tiles arrive. */
+    /* Rendered frames for the discrete states. Same posture as the course art:
+     * not awaited, and a failure just leaves those states procedural. */
+    HP.avatar.states.load(['state-idle', 'state-jump', 'state-duck', 'state-hit'])
+      .then((got) => {
+        if (got.length < 4) {
+          console.info('[HP] state sprites available: ' +
+            (got.join(', ') || 'none') + ' — the rest stay procedural');
+        }
+      });
+
     course.load({
       roadTile: 'assets/course/road-tile.jpg',
       skyline: 'assets/course/skyline.png',

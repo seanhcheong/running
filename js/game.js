@@ -445,6 +445,7 @@ window.HP = window.HP || {};
       /* The world behind this scene (js/course.js). Optional so the scene can be
        * constructed headlessly in tests without a canvas. */
       this.course = deps.course || null;
+      this._stateSprite = null;   // created lazily; see _drawStateSprite
 
       this.runPhase = 0;   // leg-swing phase, advanced by live cadence
       this.shake = 0;      // screen shake impulse, decays
@@ -711,6 +712,46 @@ window.HP = window.HP || {};
      * not a side-on pendulum. Getting that wrong is what makes back-view
      * runners look like they are marching sideways.
      * ------------------------------------------------------------------------ */
+    /**
+     * Draw a rendered state frame, or report that it is unavailable.
+     *
+     * Scale comes from the IDLE reference sprite, not from each frame's own size:
+     * every state is drawn at (procedural avatar height / idle sprite height), so
+     * a jump stays proportionally taller than a crouch and the character never
+     * changes size at the moment the game switches between drawn and procedural.
+     * Sizing each frame to a fixed height instead would make a crouch and a jump
+     * identical in height, which is the exact pulsing this is meant to avoid.
+     */
+    _drawStateSprite(name, x, groundContact, alpha, tilt) {
+      const states = HP.avatar.states;
+      if (!name || !states.has(name) || !states.refHeight()) return false;
+      const img = states.get(name);
+
+      // Register with Phaser's texture manager on first use — the images load
+      // asynchronously and may well arrive after create() has run.
+      if (!this.textures.exists(name)) this.textures.addImage(name, img);
+      if (!this._stateSprite) {
+        this._stateSprite = this.add.image(0, 0, name)
+          .setOrigin(0.5, 1)     // anchored at the feet
+          .setDepth(this.gPlayer.depth + 0.1);
+      }
+      const sp = this._stateSprite;
+      if (sp.texture.key !== name) sp.setTexture(name);
+      const k = this._avatarHeightPx() / states.refHeight();
+      sp.setVisible(true)
+        .setPosition(x, groundContact + 2)
+        .setScale(k)
+        .setAlpha(alpha)
+        // A lane change leans the character; the sprite can only rotate, which
+        // at these angles is indistinguishable from the rig's torso tilt.
+        .setRotation((tilt / Math.max(1, this.laneW)) * 0.55);
+      return true;
+    }
+
+    _hideStateSprite() {
+      if (this._stateSprite) this._stateSprite.setVisible(false);
+    }
+
     /* --- the runner -------------------------------------------------------
      * Drawn by js/avatar.js from a set of joints, the same way the wall cutouts
      * and the fit meter are, so the thing you control and the thing you are told
@@ -721,6 +762,46 @@ window.HP = window.HP || {};
      * supports because all its proportions are multiples of torso length rather
      * than absolute units.
      */
+    /**
+     * Draw a rendered state frame, or report that it is unavailable.
+     *
+     * Scale comes from the IDLE reference sprite, not from each frame's own size:
+     * every state is drawn at (procedural avatar height / idle sprite height), so
+     * a jump stays proportionally taller than a crouch and the character never
+     * changes size at the moment the game switches between drawn and procedural.
+     * Sizing each frame to a fixed height instead would make a crouch and a jump
+     * identical in height, which is the exact pulsing this is meant to avoid.
+     */
+    _drawStateSprite(name, x, groundContact, alpha, tilt) {
+      const states = HP.avatar.states;
+      if (!name || !states.has(name) || !states.refHeight()) return false;
+      const img = states.get(name);
+
+      // Register with Phaser's texture manager on first use — the images load
+      // asynchronously and may well arrive after create() has run.
+      if (!this.textures.exists(name)) this.textures.addImage(name, img);
+      if (!this._stateSprite) {
+        this._stateSprite = this.add.image(0, 0, name)
+          .setOrigin(0.5, 1)     // anchored at the feet
+          .setDepth(this.gPlayer.depth + 0.1);
+      }
+      const sp = this._stateSprite;
+      if (sp.texture.key !== name) sp.setTexture(name);
+      const k = this._avatarHeightPx() / states.refHeight();
+      sp.setVisible(true)
+        .setPosition(x, groundContact + 2)
+        .setScale(k)
+        .setAlpha(alpha)
+        // A lane change leans the character; the sprite can only rotate, which
+        // at these angles is indistinguishable from the rig's torso tilt.
+        .setRotation((tilt / Math.max(1, this.laneW)) * 0.55);
+      return true;
+    }
+
+    _hideStateSprite() {
+      if (this._stateSprite) this._stateSprite.setVisible(false);
+    }
+
     /* --- the runner -------------------------------------------------------
      * Drawn by js/avatar.js from a set of joints, the same way the wall cutouts
      * and the fit meter are, so the thing you control and the thing you are told
@@ -757,7 +838,29 @@ window.HP = window.HP || {};
       // is both how running works and a useful hint that a lane change is
       // actually in progress.
       const tilt = clamp(sim.targetLane - sim.lane, -1, 1) * 7 * scale;
-      const sx = x + tilt;
+
+      /* --- secondary motion -------------------------------------------------
+       * A back-view runner has almost nothing to read: the body hides the legs,
+       * so leg position carries very little. What sells the run from behind is
+       * everything OTHER than the legs, and none of it was here.
+       *
+       *   sway    the body shifts side to side, once per stride. The single most
+       *           effective back-view cue, and the one a still frame cannot fake.
+       *   squash  the body compresses on each footfall (twice per stride) and
+       *           widens as it does, conserving apparent mass.
+       *   twist   shoulders rotate against the hips. Real counter-rotation, so
+       *           the two ends of the body disagree instead of moving as a slab.
+       *   lean    grows with speed. In a back view a forward lean foreshortens
+       *           the body, so it reads as the crown dropping toward the horizon.
+       */
+      const strideSway = sim.airborne ? 0 : Math.sin(this.runPhase) * 3.4 * scale;
+      const footfall = Math.abs(Math.sin(this.runPhase));
+      const squash = sim.airborne ? 0 : Math.pow(1 - footfall, 2.2) * 0.085;
+      const twist = sim.airborne ? 0 : Math.sin(this.runPhase) * 3.2 * scale;
+      const leanNorm = clamp(sim.speed / (this.cfg.game.speedAtTargetPace * 1.3), 0, 1);
+      const lean = leanNorm * 0.10;
+
+      const sx = x + tilt + strideSway;
 
       const invuln = sim.t < sim.invulnUntil;
       // Blink while invulnerable so a hit is unmistakable.
@@ -775,12 +878,21 @@ window.HP = window.HP || {};
       g.fillEllipse(x, this.groundY + 3 * scale,
         32 * scale * shadowScale, 8 * scale * shadowScale);
 
+      /* Squash pulls the shoulder line toward the hips and widens the body; lean
+       * pulls it further still, which is what foreshortening looks like from
+       * behind. Both are applied to the SHOULDER line rather than to a transform,
+       * so every limb hung off it follows for free. */
+      const shoulderYc = shoulderY + torsoH * (squash + lean);
+      const shHalfc = shHalf * (1 + squash * 1.6);
+
       const joints = {
-        nose: [sx + tilt * 0.25, shoulderY - 0.45 * torsoH],
-        left_shoulder: [sx - shHalf, shoulderY],
-        right_shoulder: [sx + shHalf, shoulderY],
-        left_hip: [x - hipHalf, hipY],
-        right_hip: [x + hipHalf, hipY],
+        nose: [sx + tilt * 0.25 + twist * 0.4,
+               shoulderYc - (0.45 - lean * 0.5) * torsoH],
+        left_shoulder: [sx - shHalfc + twist, shoulderYc - twist * 0.22],
+        right_shoulder: [sx + shHalfc + twist, shoulderYc + twist * 0.22],
+        // Hips counter-rotate: opposite sign on both the shift and the tilt.
+        left_hip: [x - hipHalf - twist * 0.5, hipY + twist * 0.14],
+        right_hip: [x + hipHalf - twist * 0.5, hipY - twist * 0.14],
       };
 
       /* --- the stride -------------------------------------------------------
@@ -813,14 +925,29 @@ window.HP = window.HP || {};
       for (let i = 0; i < 2; i++) {
         const side = i ? 1 : -1;
         const name = i ? 'right' : 'left';
-        const aw = Math.sin(this.runPhase + (i ? 0 : Math.PI));
-        const ax = sx + side * shHalf * 0.9;
-        const ay = shoulderY + 2.5 * scale;
+        /* Overshoot: a raw sine decelerates into each extreme, which reads as
+         * the arms hesitating. Sharpening the peaks makes them snap through and
+         * hang at the ends, which is what a swinging limb actually does. */
+        const raw = Math.sin(this.runPhase + (i ? 0 : Math.PI));
+        const aw = Math.sign(raw) * Math.pow(Math.abs(raw), 0.72);
+        const ax = sx + side * shHalfc * 0.9 + twist * 0.7;
+        const ay = shoulderYc + 2.5 * scale;
         joints[name + '_elbow'] = [ax + side * (4.5 + 1.5 * aw) * scale,
                                    ay + (11 - aw * 3) * scale];
         joints[name + '_wrist'] = [ax + side * (6 + 2 * aw) * scale,
                                    ay + (19 + aw * 5) * scale];
       }
+
+      /* A rendered frame wins for any state the rig would have to fake — see the
+       * note on HP.avatar.states. If one is available for this state, use it and
+       * skip the procedural body entirely. */
+      const stateName = sim.airborne ? 'state-jump'
+        : duck ? 'state-duck'
+        : (invuln ? 'state-hit' : null);
+      // The shadow above is deliberately already drawn: a rendered frame needs
+      // grounding just as much as the procedural body does.
+      if (this._drawStateSprite(stateName, x, groundContact, alpha, tilt)) return;
+      this._hideStateSprite();
 
       HP.avatar.drawBlob(HP.avatar.phaserOps(g), {
         joints: joints,
