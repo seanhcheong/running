@@ -45,8 +45,17 @@ window.HP = window.HP || {};
 
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
-  /* Measured crop of the road tile, as fractions of its width. See the header. */
-  const TILE_CROP = { x0: 0.079, x1: 0.922 };
+  /* The road tile arrives ALREADY CROPPED by tools/build-course.js, so nothing is
+   * trimmed here. This used to hold the crop as well, which meant the crop was
+   * applied twice — another 8% came off each side of an already-cropped tile and
+   * the lanes drifted out of register with where the avatar is drawn. The
+   * prototype that verified the crop read the raw source and cropped once, so it
+   * never saw it; only sampling the LIVE road did.
+   *
+   * Kept as a constant rather than deleted so the sampling call below still reads
+   * as a crop, and so a tile that needs trimming at draw time (an animated source,
+   * say) has somewhere obvious to go. */
+  const TILE_CROP = { x0: 0, x1: 1 };
 
   /* How much road distance one tile length covers. Lower = the pattern repeats
    * more often, so the chevrons and coins sit closer together and the road reads
@@ -171,8 +180,12 @@ window.HP = window.HP || {};
       this._drawStreet(L, scrollZ);
 
       /* --- the road ------------------------------------------------------ */
-      if (this.tileReady) this._drawTexturedRoad(L, scrollZ);
-      else this._drawFlatRoad(L, scrollZ);
+      if (this.tileReady) {
+        this._drawTexturedRoad(L, scrollZ);
+        this._drawTrackMarks(L, scrollZ);
+      } else {
+        this._drawFlatRoad(L, scrollZ);
+      }
 
       /* --- horizon haze --------------------------------------------------
        * Two jobs. It hides the shimmer where scanline bands sample under one
@@ -187,6 +200,48 @@ window.HP = window.HP || {};
       ctx.fillStyle = haze;
       ctx.globalAlpha = 0.75 + 0.25 * clamp(speedNorm, 0, 1);
       ctx.fillRect(0, L.horizonY, L.W, hazeH);
+      ctx.globalAlpha = 1;
+    }
+
+    /**
+     * Transverse markings across the track.
+     *
+     * Not decoration — a measured fix. The road texture is a uniform surface with
+     * CONTINUOUS lane lines, which means nothing on it changes as it scrolls:
+     * sampling the rendered road before and after 15 road units of travel found
+     * only 6.4% of pixels changed, mean 4.8/255. The track conveyed no motion at
+     * all, and every sense of speed was coming from the buildings.
+     *
+     * Anything crossing the direction of travel fixes that, because it sweeps
+     * toward the player and grows as it comes. A real athletics track is covered
+     * in exactly such markings — start lines, distance marks, exchange zones — so
+     * this is authentic as well as functional, which is the good case.
+     *
+     * Drawn here rather than baked into the tile so the spacing is independent of
+     * the texture's repeat length. Baked in, marks and tile would have to share a
+     * period, and tuning one would move the other.
+     */
+    _drawTrackMarks(L, scrollZ) {
+      const ctx = this.ctx;
+      const zRef = L.zRef;
+      const SPACING = 11;          // road units between marks
+      const phase = ((scrollZ % SPACING) + SPACING) % SPACING;
+
+      ctx.fillStyle = '#ffffff';
+      for (let n = -1; n < Math.ceil(Z_FAR / SPACING) + 1; n++) {
+        const z = n * SPACING - phase;
+        if (z > Z_FAR) continue;
+        const s = zRef / (zRef + z);
+        if (!isFinite(s) || s <= 0) continue;
+        const y = L.horizonY + (L.groundY - L.horizonY) * s;
+        if (y > L.H) continue;
+        const half = L.roadHalfW * s;
+        /* Fade with distance, matching the horizon haze, and cap the near
+         * thickness — a mark right at the camera would otherwise be a band
+         * several times the height of anything else on screen. */
+        ctx.globalAlpha = clamp(s * 1.9, 0, 1) * 0.42;
+        ctx.fillRect(L.cx - half, y, half * 2, clamp(3.4 * s, 1, 9));
+      }
       ctx.globalAlpha = 1;
     }
 

@@ -515,9 +515,15 @@ window.HP = window.HP || {};
        * to width alone makes both grotesquely large in landscape, where there is
        * lots of width and very little depth to draw into. */
       const depth = this.groundY - this.horizonY;
-      /* Narrower than before: the reference framing gives the road about two
-       * thirds of the screen and spends the outer thirds on the street. */
-      this.roadHalfW = Math.min(w * 0.36, depth * 0.62);
+      /* Wide, per the reference: the track dominates the foreground and the
+       * buildings sit in the middle distance rather than flanking the camera.
+       *
+       * Two bounds, and both had to move. The width term is what normally binds
+       * on a phone. The DEPTH term exists to stop the road being wider than it is
+       * deep, which reads as a fisheye — but at 0.62 it was binding on tablets
+       * and squaring off the road there while phones got the full width, so the
+       * same build looked like two different games. */
+      this.roadHalfW = Math.min(w * 0.46, depth * 0.78);
       this.laneW = this.roadHalfW / 1.5; // 3 lanes => lane centres at -1, 0, 1
     }
 

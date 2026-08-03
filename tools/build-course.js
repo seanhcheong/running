@@ -45,8 +45,33 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'assets', 'course');
 const PORT = 8124;
 
-/* Measured crop of the road tile, as fractions of its width. See the header. */
-const CROP = { x0: 0.079, x1: 0.922 };
+/* ===========================================================================
+ * ROAD TILE CANDIDATES
+ * ---------------------------------------------------------------------------
+ * Listed newest-first; the first one present in resources/ wins. Each carries its
+ * OWN crop, because whether a crop is needed is a property of the art:
+ *
+ *   red athletics track   no crop. Generated to the "lanes fill the image edge to
+ *                         edge, no rails" spec, and it landed — measured lane
+ *                         centres 0.1775 / 0.5071 / 0.8295 against the 0.1667 /
+ *                         0.5 / 0.8333 the projection wants, i.e. within 1.1% of
+ *                         tile width. Nothing to trim.
+ *   rainbow track         cropped. A full track render including its side rails,
+ *                         so its lanes sat at 0.213 / 0.500 / 0.775 and 16% of
+ *                         the width had to go.
+ *
+ * The crop belongs HERE and nowhere else. It was also being applied a second time
+ * at draw time in course.js, which silently trimmed another 8% off each side of an
+ * already-cropped tile and pulled the lanes out of register with the avatar. The
+ * prototype that verified the crop read the raw source and cropped once, so it
+ * never saw the fault.
+ * ======================================================================== */
+const ROAD_TILES = [
+  { match: /Red_running_track.*\.(jpe?g|png)$/i, crop: { x0: 0, x1: 1 } },
+  { match: /Running_track_with_rainbow_lanes.*\.(jpe?g|png)$/i,
+    crop: { x0: 0.079, x1: 0.922 } },
+  { match: /Running_track.*rainbow.*\.(jpe?g|png)$/i, crop: { x0: 0.079, x1: 0.922 } },
+];
 
 /* Output width for the road. The road is at most ~2 x roadHalfW on screen, which
  * is under 400px on a phone, so anything past ~640 is bytes the player downloads
@@ -152,12 +177,18 @@ function buildInPage(arg) {
 }
 
 (async () => {
-  const roadFile = pick([/Running_track_with_rainbow_lanes.*\.jpe?g$/i,
-                         /Running_track.*rainbow.*\.jpe?g$/i]);
+  const dir = fs.readdirSync(path.join(ROOT, 'resources'));
+  let road = null;
+  for (const cand of ROAD_TILES) {
+    const hit = dir.filter((f) => cand.match.test(f)).sort().pop();
+    if (hit) { road = { file: hit, crop: cand.crop }; break; }
+  }
+  if (!road) throw new Error('no road tile found in resources/');
+  const roadFile = road.file;
   const skyFile = pick([/Stylized_city_skyline.*1529.*\.jpe?g$/i,
                         /Stylized_city_skyline.*\.jpe?g$/i]);
-  if (!roadFile) throw new Error('no road tile found in resources/');
-  console.log('road   <- ' + roadFile);
+  console.log('road   <- ' + roadFile +
+    '   crop x ' + road.crop.x0 + '..' + road.crop.x1);
   console.log('sky    <- ' + (skyFile || '(none)'));
 
   const srv = await serve();
@@ -174,7 +205,7 @@ function buildInPage(arg) {
     const res = await page.evaluate(buildInPage, {
       roadSrc: base + 'resources/' + encodeURIComponent(roadFile),
       skySrc: skyFile ? base + 'resources/' + encodeURIComponent(skyFile) : null,
-      crop: CROP, roadW: ROAD_W, band: SKY_BAND, skyW: SKY_W,
+      crop: road.crop, roadW: ROAD_W, band: SKY_BAND, skyW: SKY_W,
     });
 
     fs.mkdirSync(OUT, { recursive: true });
