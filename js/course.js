@@ -260,6 +260,38 @@ window.HP = window.HP || {};
             ctx.fillRect(x0 + (side < 0 ? 0 : bw - nw), yBase - bh - bh * 0.16,
               nw, bh * 0.16);
           }
+
+          /* --- lit windows and a sign --------------------------------------
+           * On a dark facade this is where essentially all of the street's
+           * readability comes from, and it is also the cheapest sense of speed
+           * available: a grid of small bright marks streaming past the edge of
+           * the frame reads as motion far more strongly than a plain wall does.
+           *
+           * Skipped once a building is small on screen — below a few pixels per
+           * window the grid turns into noise that shimmers as the road scrolls. */
+          if (bw > 22 && bh > 26) {
+            const cols = Math.max(1, Math.round(bw / (10 * Math.max(0.35, s))));
+            const rowsN = Math.max(1, Math.round(bh / (13 * Math.max(0.35, s))));
+            const pad = bw * 0.14;
+            const cw = (bw - pad * 2) / cols, chh = (bh - pad * 2) / rowsN;
+            const ww = Math.max(1, cw * 0.52), wh = Math.max(1, chh * 0.46);
+            for (let wy = 0; wy < rowsN; wy++) {
+              for (let wx = 0; wx < cols; wx++) {
+                const q = rnd(idx * 97 + wy * 13 + wx, side > 0 ? 11 : 12);
+                if (q < 0.42) continue;                  // unlit
+                ctx.fillStyle = q > 0.86 ? P.windowCool : P.windowLit;
+                ctx.fillRect(x0 + pad + wx * cw, yBase - bh + pad + wy * chh, ww, wh);
+              }
+            }
+            // A vertical neon sign on the road-facing edge, on some buildings.
+            if (r1 > 0.62) {
+              const sw2 = Math.max(1.5, bw * 0.10);
+              const sh2 = bh * 0.42;
+              ctx.fillStyle = P.signNeon;
+              ctx.fillRect(side < 0 ? xInner - sw2 * 1.6 : xInner + sw2 * 0.6,
+                yBase - bh + bh * 0.10, sw2, sh2);
+            }
+          }
         }
       }
     }

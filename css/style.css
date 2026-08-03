@@ -181,7 +181,30 @@ body.cam-off #video, body.cam-off #debugCanvas { opacity: 0; }
 body.cam-pip .hud-top,
 body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
 
-.hud-block { min-width: 0; }
+/* Dark pills, not dark ink on the sky.
+ *
+ * On a bright world a dark label floating over a rainbow road has to fight
+ * whatever colour happens to be behind it that frame, and a road that scrolls
+ * means that colour is never stable. A pill gives every readout its own constant
+ * background, so contrast stops depending on the scenery — which matters here
+ * more than usual, because the player is reading it while out of breath. */
+.hud-block {
+  min-width: 0;
+  /* Label ABOVE value, not inline beside it.
+   *
+   * Inline read better and did not fit: three pills whose width is
+   * label + gap + value overflowed a 320px viewport and collided with the camera
+   * PIP, and shrinking the numbers to compensate took them under the minimum
+   * legible size — which is not a style preference here, it is the constraint
+   * that the player is 6-10 feet away and out of breath. Stacking makes each pill
+   * only as wide as its widest line and keeps the numbers big. */
+  display: flex;
+  flex-direction: column;
+  background: rgba(28, 34, 54, 0.82);
+  border-radius: 16px;
+  padding: 5px 12px 6px;
+  box-shadow: 0 2px 8px rgba(30, 50, 80, 0.22);
+}
 .hud-block.hud-right { text-align: right; }
 .hud-shields { text-align: center; }
 
@@ -189,22 +212,24 @@ body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
   font-size: clamp(9px, 1.6vmin, 12px);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--dim);
+  color: rgba(255, 255, 255, 0.72);
   font-weight: 700;
+  white-space: nowrap;
+  margin-bottom: 1px;
 }
 
 .hud-value {
   font-family: var(--num);
-  font-size: clamp(20px, 4.6vmin, 38px);
+  font-size: clamp(19px, 4.2vmin, 34px);
   font-weight: 700;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
-  /* A light halo, not a dark shadow: the ink is dark now and the background is
-     pale, so the job is to separate glyphs from a busy rainbow road rather than
-     to make bright type readable on black. */
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75), 0 0 10px rgba(255, 255, 255, 0.9);
+  color: #fff;
+  /* No halo: the pill behind it already separates the glyphs, and a halo on top
+     of an opaque background just fattens the type. */
+  text-shadow: none;
 }
-.hud-value .unit { font-size: 0.5em; color: var(--dim); margin-left: 2px; }
+.hud-value .unit { font-size: 0.5em; color: rgba(255,255,255,0.6); margin-left: 2px; }
 
 #hudShields { color: var(--accent); letter-spacing: 0.08em; }
 #hudShields.empty { color: var(--danger); }
@@ -217,8 +242,13 @@ body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--dim);
+  color: #fff;
   margin-bottom: 7px;
+}
+.gap-label span {
+  background: rgba(28, 34, 54, 0.82);
+  border-radius: 999px;
+  padding: 3px 11px 4px;
 }
 
 .gap-bar {

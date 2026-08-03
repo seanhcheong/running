@@ -46,11 +46,22 @@ window.HP = window.HP || {};
     hazeClear: 'rgba(214, 238, 246, 0)',
 
     /* --- the street ------------------------------------------------------
-     * Buildings flanking the road. Sampled from the skyline art so the near
-     * street and the distant city read as the same place. */
-    streetHues: ['#f2a9bd', '#f7c9a3', '#f6e3a8', '#a9dfc8', '#c3bde8',
-                 '#f0b7cd', '#bfe3d6', '#f5d3b0'],
-    streetShade: 'rgba(90, 105, 140, 0.20)',
+     * DARK, and that is the point. These were pastel, close in value to the road,
+     * and the result was mush: nothing separated the track from the buildings and
+     * the eye had nothing to lock onto. In the reference the frontages are dark
+     * purple-slate, which is exactly what makes a rainbow road pop — the road is
+     * then the brightest thing in the frame by a wide margin.
+     *
+     * The distant skyline stays pastel. That reads correctly as aerial
+     * perspective: things far away wash out toward the sky. */
+    streetHues: ['#4a3f63', '#3d3a55', '#564a70', '#453d5e', '#5b4d72',
+                 '#39344f', '#514768', '#403a58'],
+    streetShade: 'rgba(14, 12, 26, 0.42)',
+    /* Lit windows and signage. Warm and cyan against the dark walls, which is
+     * where almost all of the street's readability now comes from. */
+    windowLit: 'rgba(255, 232, 176, 0.88)',
+    windowCool: 'rgba(150, 232, 255, 0.85)',
+    signNeon: 'rgba(255, 150, 210, 0.92)',
 
     /* --- road, only used when the texture is missing -------------------- */
     road: '#b9c9d6',
