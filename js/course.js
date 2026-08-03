@@ -49,9 +49,10 @@ window.HP = window.HP || {};
   const TILE_CROP = { x0: 0.079, x1: 0.922 };
 
   /* How much road distance one tile length covers. Lower = the pattern repeats
-   * more often and the road appears to move faster for a given speed. Tuned by
-   * eye against the chevrons: much below 20 and they strobe. */
-  const UNITS_PER_TILE = 26;
+   * more often, so the chevrons and coins sit closer together and the road reads
+   * as moving faster for a given speed. Matched to the reference, where the
+   * markings are noticeably denser than a literal reading of the tile gives. */
+  const UNITS_PER_TILE = 17;
 
   /* Band height in screen pixels for the scanline loop. 1 is smoothest; 2 halves
    * the draw calls for no visible difference, because consecutive bands differ by
@@ -204,7 +205,7 @@ window.HP = window.HP || {};
       const ctx = this.ctx;
       const P = this.palette;
       const zRef = L.zRef;
-      const SPACING = 9;            // road units between buildings
+      const SPACING = 6;            // road units between buildings
       const hues = P.streetHues;
 
       /* Integer hash. Stable per index, and cheap — this runs for every building
@@ -221,9 +222,11 @@ window.HP = window.HP || {};
       for (let k = count; k >= 0; k--) {
         const idx = first + k;
         const z = idx * SPACING - scrollZ;
-        /* Nothing nearer than this. A building at z~0 projects to several times
-         * the screen height and simply becomes a slab across the frame. */
-        if (z < 5 || z > Z_FAR) continue;
+        /* Down to z = 2 rather than 5, so the frontages continue past the player
+         * and off the bottom corners instead of stopping short and leaving a gap
+         * of bare ground beside the camera. Still not to zero: a building at z~0
+         * projects to several times the screen height and becomes a slab. */
+        if (z < 2 || z > Z_FAR) continue;
         const s = zRef / (zRef + z);
         const yBase = L.horizonY + (L.groundY - L.horizonY) * s;
         const kerb = L.roadHalfW * s;
@@ -233,13 +236,14 @@ window.HP = window.HP || {};
           const r1 = rnd(idx, side > 0 ? 3 : 4);
           const r2 = rnd(idx, side > 0 ? 5 : 6);
           // Heights in road units so they shrink with depth like everything else.
-          const hUnits = 0.9 + r0 * 1.5;
-          const wUnits = 0.9 + r1 * 1.1;
-          const bw = wUnits * L.roadHalfW * s * 0.42;
-          const bh = hUnits * (L.groundY - L.horizonY) * s * 0.30;
-          /* A pavement between kerb and frontage, so the buildings do not crowd
-           * the road — in the reference there is clear ground either side. */
-          const xInner = L.cx + side * (kerb + L.roadHalfW * s * 0.10);
+          const hUnits = 1.15 + r0 * 1.9;
+          const wUnits = 1.0 + r1 * 1.0;
+          const bw = wUnits * L.roadHalfW * s * 0.52;
+          const bh = hUnits * (L.groundY - L.horizonY) * s * 0.40;
+          /* A narrow kerb only. The reference has the frontages meeting the road
+           * almost directly; the wider pavement this used to leave was reading as
+           * a gap and pushing the street away from the track. */
+          const xInner = L.cx + side * (kerb + L.roadHalfW * s * 0.03);
           const x0 = side < 0 ? xInner - bw : xInner;
 
           ctx.fillStyle = hues[Math.floor(r2 * hues.length) % hues.length];
@@ -273,13 +277,22 @@ window.HP = window.HP || {};
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'low';   // 'high' costs ~3x here for no gain
 
+      /* Down to the BOTTOM OF THE FRAME, not to groundY.
+       *
+       * groundY is where the player stands, i.e. z = 0 — it is not the edge of
+       * the world. Stopping there left the bottom fifth of the screen as bare
+       * ground with the road apparently floating above it, which is most of why
+       * the track read as small and detached from the camera. Rows below groundY
+       * simply have s > 1, so the same inverse gives a NEGATIVE z (road that has
+       * already passed the player) and a half-width wider than roadHalfW. The
+       * maths needs no special case; it only needed to be allowed to run. */
       const yTop = L.horizonY + depth * (zRef / (zRef + Z_FAR));
-      for (let y = Math.ceil(yTop); y < L.groundY; y += BAND) {
+      for (let y = Math.ceil(yTop); y < L.H; y += BAND) {
         const s = (y - L.horizonY) / depth;
         if (s <= 0.002) continue;
         const z = zRef * (1 - s) / s;
         const sNext = (y + BAND - L.horizonY) / depth;
-        const zNext = sNext >= 1 ? 0 : zRef * (1 - sNext) / sNext;
+        const zNext = zRef * (1 - sNext) / sNext;
 
         const halfW = L.roadHalfW * s;
         // v runs 0..1 down the tile; negated so the road moves TOWARD the player.

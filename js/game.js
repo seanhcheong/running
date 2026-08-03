@@ -388,7 +388,16 @@ window.HP = window.HP || {};
    * the exaggeration on top dragged the lifted foot across the belly instead of
    * up behind the body, which is the one cue that makes a back view read as
    * running. */
-  const RUN_METRICS = { legOut: 0, legLength: 0.92 };
+  const RUN_METRICS = {
+    legOut: 0, legLength: 0.92,
+    /* Tuck the flippers in. The default pushes arms out to the silhouette edge so
+     * a WALL CUTOUT stays readable — three of the ten poses differ only in the
+     * arms, and buried arms make those unmatchable. The runner has the opposite
+     * need: nobody is judging its arm position, and at this camera scale the same
+     * spread reads as long paddles rather than as the reference's stubby
+     * flippers. Overriding here leaves the cutouts untouched. */
+    armAnchor: 0.80,
+  };
 
   /* Avatar sizing, named because WallScene has to size its cutouts to match the
    * runner — a cutout that is not the same size as the character you are steering
@@ -406,15 +415,20 @@ window.HP = window.HP || {};
    * The cap stops the character growing wider than the road it stands on when the
    * viewport is very tall and narrow. */
   /* Derived from the reference mockup by proportion rather than guessed: there the
-   * character's WIDTH is about 38% of the road's width, which is the measurement
-   * that matters — it is what decides whether the player can still see the lanes
-   * and the gate they are steering into. The blob is 1.9 torsos wide, so
+   * character's WIDTH is about 38% of the road's width — the measurement that
+   * matters, since it decides whether the player can still see the lanes and the
+   * gate they are steering into. The blob is 1.9 torsos wide, so
    * 1.9 * 30 * scale = 0.38 * 2 * roadHalfW  =>  scale = roadHalfW / 75.
+   *
+   * Nudged to 64 after the road was extended past the player to the bottom of the
+   * frame: the road now flares much wider below groundY, and the eye reads the
+   * character against that full width rather than against its width at the
+   * character's own depth, so 75 looked smaller than the same ratio did before.
    *
    * The height term is a cap for landscape, where roadHalfW is generous and the
    * screen is short. Sizing by width alone put the avatar at 43% of the frame
    * width and it occluded the road it was running on. */
-  const AVATAR_ROAD_DIV = 75;      // roadHalfW / this = unit scale
+  const AVATAR_ROAD_DIV = 64;      // roadHalfW / this = unit scale
   const AVATAR_HEIGHT_CAP = 330;   // H / this caps it on short viewports
   const AVATAR_TORSO = 30;         // torso length in those units
 
