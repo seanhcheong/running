@@ -131,6 +131,46 @@ const SHEETS = [
     keep: ['standing', 'state-run'],
   },
   {
+    /* --- THE RUN CYCLE -----------------------------------------------------
+     * Not yet in resources/. This entry ships ahead of the art so that dropping
+     * the sheet in and re-running the tool is the whole job.
+     *
+     * WHY THIS SHEET IS THE ONE THAT MATTERS
+     *
+     * The runner is currently a single frame moved by transforms, and a filmstrip
+     * of one full stride showed the reason that will never read as running: across
+     * all eight phases THE FEET ARE PIXEL-IDENTICAL. Both planted, never
+     * alternating, while the body bobs and leans. A rigid two-footed stance that
+     * rocks side to side is not an under-tuned run, it is the definition of a
+     * waddle, and no amount of amplitude tuning converts one into the other. The
+     * feet have to change between frames, and only art can do that.
+     *
+     * The same filmstrip also settled an earlier claim of mine in the other
+     * direction: the feet are plainly visible below the body, unobstructed. The
+     * "body occludes the legs, so leg position does not read from behind" argument
+     * was simply wrong, and this is the second correction it has needed.
+     *
+     * 4 columns x 2 rows. Row 1 is the left foot's step, row 2 the right; four
+     * moments each (contact, passing, push-off, flight). See docs/ART-BRIEF.md for
+     * the prompt and for why each cell is described categorically rather than as a
+     * degree of swing. */
+    match: /(run_cycle|Penguin_run_cycle|run.?cycle).*\.(jpe?g|png)$/i,
+    rows: 2, cols: 4,
+    key: 'backdrop',
+    /* No standing pose exists on a run-cycle sheet. The left CONTACT frame is the
+     * closest thing: the stance leg is straight and vertical under the hips, so the
+     * body sits at very close to full standing height. Approximate on purpose, and
+     * the one number to check first if the character changes size when the cycle
+     * takes over from state-run. */
+    standRef: 'state-run-1',
+    names: [
+      ['state-run-1', 'state-run-2', 'state-run-3', 'state-run-4'],
+      ['state-run-5', 'state-run-6', 'state-run-7', 'state-run-8'],
+    ],
+    keep: ['state-run-1', 'state-run-2', 'state-run-3', 'state-run-4',
+           'state-run-5', 'state-run-6', 'state-run-7', 'state-run-8'],
+  },
+  {
     match: /Penguin_reference_sheet.*\.(jpe?g|png)$/i,
     rows: 3, cols: 3,
     /* --- BACKDROP DISTANCE, not a hue window ------------------------------

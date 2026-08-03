@@ -218,6 +218,28 @@ what does not read is the *forward* swing, which foreshortens to nothing. The
 part that reads is vertical: the trailing heel kicking up, the sole turning
 toward the camera, the stance leg straightening.
 
+### The filmstrip that settles it
+
+Rendering one full stride as eight frames side by side made the cause obvious and
+also corrected the same claim of mine a second time:
+
+**Across all eight phases the feet are pixel-identical.** Both planted flat, never
+alternating, while the body bobs and leans above them. A rigid two-footed stance
+that rocks side to side is not an under-tuned run — it is the *definition* of a
+waddle, and no amplitude tuning converts one into the other. This is why the sway
+fix below helped and did not solve it.
+
+The same strip also shows the feet **clearly visible below the body, unobstructed.**
+So the original "the body occludes the legs, so leg position does not read from
+behind" argument was wrong on its own terms, quite apart from having been measured
+on three frames that turned out to be one render repeated. Leg position reads fine
+at this camera angle. It is simply not present.
+
+**The single most important property of the new sheet is therefore that THE FEET
+DIFFER BETWEEN CELLS.** Everything else — panel counts, grid layout, lighting — is
+secondary to that one thing. Even two cells (left foot down, right foot down) would
+break the waddle; four would look like running; eight would look good.
+
 The visible consequence is a waddle. With no alternating legs, the only
 once-per-stride motion is lateral sway, and sway had been pushed up to cover for
 them. Measured against a 248px body: lateral travel 9.2% of body height at once
@@ -332,6 +354,10 @@ character stays consistent within it.
 
 ### 5. Back-view run cycle — aspect 2:1, 4 columns × 2 rows
 
+**Save it into `resources/` with `run_cycle` somewhere in the filename**, then run
+`node tools/extract-sprites.js`. The sheet entry already exists in that tool and is
+waiting for the file, so no code change is needed to slice it.
+
 ```
 A reference sheet of one 3D-rendered cartoon penguin character, arranged in a
 strict 4 column by 2 row grid, 8 cells total, seen from DIRECTLY BEHIND.
@@ -354,7 +380,13 @@ no labels, no numbers, no borders between cells.
 
 The 8 cells are 8 moments of a running stride. Top row is the LEFT foot's step,
 bottom row is the RIGHT foot's step — the same four moments with the legs
-swapped. The legs must be clearly and obviously different between cells:
+swapped.
+
+THE MOST IMPORTANT REQUIREMENT: THE FEET AND LEGS MUST BE IN A CLEARLY DIFFERENT
+POSITION IN EVERY SINGLE CELL. Do not repeat the same standing stance with both
+feet flat on the ground. In most cells only ONE foot touches the ground, and in two
+of them NEITHER foot touches the ground. If two cells have the feet in the same
+place, the sheet is wrong.
 
 Top row, left to right:
 1. LEFT foot flat on the ground directly under the hips, left leg straight. The
