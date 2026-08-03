@@ -88,6 +88,28 @@
     </div>
   </div>
 
+  <!-- ------------------------------------------------------- FIT METER -->
+  <!-- Shared by both modes, which is why it is NOT inside #wallHud: the running
+       game shows it while a pose gate is live and hides it the rest of the time.
+       Not polish either way — without it a near miss is indistinguishable from a
+       wild miss and the player has no way to correct in time. -->
+  <div class="fit-wrap hidden" id="fitWrap">
+    <div class="fit-head">
+      <span id="fitPose">—</span>
+      <span id="fitHint" class="dim"></span>
+    </div>
+    <div class="fit-body">
+      <canvas id="fitCanvas" width="150" height="150"></canvas>
+      <div class="fit-bar-wrap">
+        <div class="fit-bar">
+          <div class="fit-fill" id="fitFill"></div>
+          <div class="fit-target" id="fitTarget"></div>
+        </div>
+        <div class="fit-status" id="fitStatus">GET READY</div>
+      </div>
+    </div>
+  </div>
+
   <!-- --------------------------------------------------------- WALL HUD -->
   <!-- Wall Mode's own HUD. Separate from #hud so the running mode is
        completely unaffected by anything in here. -->
@@ -107,24 +129,6 @@
       </div>
     </div>
 
-    <!-- The fit meter. Not polish: without it a near miss is indistinguishable
-         from a wild miss, and the player has no way to correct in time. -->
-    <div class="fit-wrap" id="fitWrap">
-      <div class="fit-head">
-        <span id="fitPose">—</span>
-        <span id="fitHint" class="dim"></span>
-      </div>
-      <div class="fit-body">
-        <canvas id="fitCanvas" width="150" height="150"></canvas>
-        <div class="fit-bar-wrap">
-          <div class="fit-bar">
-            <div class="fit-fill" id="fitFill"></div>
-            <div class="fit-target" id="fitTarget"></div>
-          </div>
-          <div class="fit-status" id="fitStatus">GET READY</div>
-        </div>
-      </div>
-    </div>
 
     <!-- Sim-mode key legend, in play rather than only on the start screen:
          without it the number keys are undiscoverable once the run begins. -->

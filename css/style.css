@@ -283,6 +283,12 @@ body.cam-pip .gap-wrap { padding-right: min(27vmin, 154px); }
 
 /* --- pace meter ---------------------------------------------------------- */
 .pace-wrap { margin-top: auto; }
+/* A live pose gate replaces the pace meter rather than stacking on top of it. Both
+ * are bottom-anchored, and during a gate the player has been asked to STOP running
+ * and match a shape — pace is momentarily the wrong thing to be reading, and the
+ * void is suspended anyway, so nothing is hidden that still matters. */
+body.gate-live .pace-wrap { opacity: 0; transition: opacity 160ms ease; }
+.pace-wrap { transition: opacity 220ms ease; }
 body.cam-pip .pace-wrap { padding-right: 0; }
 
 .pace-bar {
@@ -769,7 +775,21 @@ body.cam-pip #wallHud .hud-top { padding-right: min(27vmin, 154px); }
  * TARGET skeleton with the player's live pose overlaid, so a miss says which
  * limb is wrong rather than only that something is. */
 .fit-wrap {
-  margin-top: auto;
+  /* Bottom-anchored on its own rather than by margin-top:auto inside a flex
+   * column. It used to live inside #wallHud and be pushed down by that column;
+   * the running game shows the SAME widget while a pose gate is live, and there it
+   * is a sibling of #stage with no flex parent to push it — it laid out at the top
+   * of the document, underneath the game canvas, with its `hidden` class correctly
+   * removed and nothing visible on screen.
+   *
+   * Taking it out of that column costs wall mode nothing: the only siblings it used
+   * to push down with it, the toast and .hud-controls, are both absolutely
+   * positioned already and were never in the flow. */
+  position: absolute;
+  z-index: 4;
+  left: calc(var(--safe-l) + 12px);
+  right: calc(var(--safe-r) + 12px);
+  bottom: calc(var(--safe-b) + 10px);
   background: var(--panel);
   border: 1px solid var(--panel-line);
   border-radius: 14px;

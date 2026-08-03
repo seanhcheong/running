@@ -5,8 +5,8 @@
  *
  *   HP.GameSim   Pure simulation. No Phaser, no DOM, no pose code. It reads a
  *                plain `signals` object (paceRatio / laneIntent / ducking /
- *                tracked) that main.js refreshes from the tracker, and emits
- *                gameplay events. This is what makes the game testable with a
+ *                tracked / poseError) that main.js refreshes from the tracker,
+ *                and emits gameplay events. This is what makes the game testable with a
  *                keyboard (?sim=1) and what keeps the tuning honest.
  *
  *   HP.RunScene  A Phaser scene that draws the sim's state. Everything is drawn
@@ -18,6 +18,18 @@
  *   early; as the void speeds up you have to dig in. Obstacles don't kill you —
  *   they cost you gap, which is the same currency the void spends. So a hit
  *   means "run harder now", not "game over".
+ *
+ *   Punctuating that: POSE GATES. A wall with a pose-shaped hole closes on you and
+ *   you have to be in that shape when it arrives — so a run is not only cadence
+ *   and reflexes, it also asks for squats, star jumps and knee raises. The void
+ *   waits while a gate is live, because a gate asks you to stop running and the
+ *   void's whole premise is that stopping kills you; charging you for complying
+ *   would make every gate a punishment for engaging with it. See _updateGates and
+ *   cfg.game.gate.
+ *
+ *   Distinct from WALL MODE (js/wall-mode.js), which is a separate auto-scrolling
+ *   scene built entirely out of those walls and where you never run at all. Both
+ *   draw through the same renderer.
  * ========================================================================== */
 
 window.HP = window.HP || {};
@@ -64,6 +76,15 @@ window.HP = window.HP || {};
       this.invulnUntil = 0;
       this.obstacles = [];
       this.nextObstacleAt = g.obstacleIntervalM * 0.75;
+
+      /* --- pose gates ---------------------------------------------------- */
+      this.gates = [];
+      this.nextGateAt = g.gate.firstAtM;
+      this.gateHold = false;      // a gate is live: the void waits, see cfg.gate
+      this.gatesPassed = 0;
+      this.gatesMissed = 0;
+      this._gateId = 0;
+      this._lastGatePose = null;
       this.nextMilestoneAt = g.milestoneDistanceM;
       this.hits = 0;
       this.dodged = 0;
@@ -82,6 +103,12 @@ window.HP = window.HP || {};
         laneIntent: 0,
         ducking: false,
         cadence: 0,
+        /* How far the player's body is from the shape the live gate is asking
+         * for, in body-scale units. ONE number, exactly like paceRatio: the sim
+         * stays free of pose code, which is what keeps ?sim=1 testable. Infinity
+         * means "no reading", which is a different failure from "wrong shape"
+         * and is reported differently by the HUD. */
+        poseError: Infinity,
       };
     }
 
@@ -150,9 +177,18 @@ window.HP = window.HP || {};
         this.paceRatioSamples++;
       }
 
-      /* --- the void ------------------------------------------------------ */
+      /* --- pose gates ----------------------------------------------------
+       * Before the void, because the void reads gateHold, and after speed,
+       * because a gate's approach rate depends on it. */
+      this._updateGates(dt);
+
+      /* --- the void ------------------------------------------------------
+       * `gateHold` suspends it exactly as tracking loss does, and for a related
+       * reason: in both cases the player is being asked to do something other
+       * than run, so charging them for not running is charging them for
+       * complying. See cfg.game.gate — THE VOID WAITS. */
       this.wallSpeed = this.wallSpeedAt(this.t);
-      if (!this.frozen) {
+      if (!this.frozen && !this.gateHold) {
         this.gap = clamp(this.gap + (this.speed - this.wallSpeed) * dt, 0, g.gapMax);
 
         if (this.gap <= 0) {
@@ -218,6 +254,183 @@ window.HP = window.HP || {};
       }
     }
 
+    /* =========================================================================
+     * POSE GATES
+     * -------------------------------------------------------------------------
+     * A wall with a pose-shaped hole closes on the player, who must be in that
+     * shape when it arrives. The state machine is approach -> armed -> contact
+     * -> done, and the hold is ACCUMULATED across the contact window rather than
+     * sampled once, so a pose that flickers in and out does not pass.
+     *
+     * `armed` is the moment the demand becomes visible: the prompt and the fit
+     * meter appear, and the void stops advancing. Everything the player needs to
+     * react is available for cfg.gate.armSeconds before contact.
+     * ====================================================================== */
+
+    /** Approach rate of a gate: the world's, or the wall's own, whichever is faster. */
+    _gateSpeed() {
+      return Math.max(this.speed, this.cfg.game.gate.approachSpeed);
+    }
+
+    /** The gate the player should be reacting to, or null. */
+    activeGate() {
+      for (let i = 0; i < this.gates.length; i++) {
+        const gt = this.gates[i];
+        if (gt.state === 'armed' || gt.state === 'contact') return gt;
+      }
+      return null;
+    }
+
+    gateToleranceFor(poseId) {
+      const pose = HP.POSES && HP.POSES[poseId];
+      return (pose && pose.tolerance) || this.cfg.wall.defaultTolerance;
+    }
+
+    /** 0..1 how close the player is to the live gate's shape, for the fit meter. */
+    gateFit() {
+      const gt = this.activeGate();
+      if (!gt) return 0;
+      const err = this.signals.poseError;
+      if (!isFinite(err)) return 0;
+      const range = this.gateToleranceFor(gt.poseId) * this.cfg.wall.fitRangeMultiple;
+      return clamp(1 - err / range, 0, 1);
+    }
+
+    /** Where on the fit bar the pass threshold sits, so it can be marked. */
+    gateFitThreshold() {
+      return 1 - 1 / this.cfg.wall.fitRangeMultiple;
+    }
+
+    gateMatched() {
+      const gt = this.activeGate();
+      if (!gt) return false;
+      return this.signals.poseError < this.gateToleranceFor(gt.poseId);
+    }
+
+    _pickGatePose() {
+      const list = this.cfg.game.gate.poses.filter((id) => HP.POSES && HP.POSES[id]);
+      if (!list.length) return null;
+      /* Never the same shape twice running. A repeat can be passed by simply not
+       * moving, which is the one thing this mechanic exists to prevent — the same
+       * reason wall mode's level alternates. */
+      const choices = list.length > 1
+        ? list.filter((id) => id !== this._lastGatePose)
+        : list;
+      return choices[Math.floor(Math.random() * choices.length)];
+    }
+
+    _updateGates(dt) {
+      const cfg = this.cfg.game.gate;
+      if (!cfg.enabled) return;
+
+      /* --- spawn ---------------------------------------------------------
+       * On distance, like obstacles, so a faster player does not meet a denser
+       * field. Never two at once: overlapping demands would be unreadable, and
+       * the fit meter can only show one. */
+      if (this.distance >= this.nextGateAt && !this.gates.some((gt) => gt.state !== 'done')) {
+        const poseId = this._pickGatePose();
+        if (poseId) {
+          this._lastGatePose = poseId;
+          this.gates.push({
+            id: ++this._gateId,
+            poseId: poseId,
+            z: cfg.spawnZ,
+            thickness: cfg.thickness,
+            state: 'approach',
+            held: 0,
+            required: 0,     // set on contact, from the speed actually seen
+            result: null,
+          });
+          this.emit('gateSpawn', { poseId: poseId });
+        }
+        const jitter = (Math.random() * 2 - 1) * cfg.intervalJitterM;
+        this.nextGateAt = this.distance + Math.max(40, cfg.intervalM + jitter);
+      }
+
+      /* --- advance and resolve -------------------------------------------- */
+      const rate = this._gateSpeed();
+      const armZ = rate * cfg.armSeconds;
+      let hold = false;
+
+      for (let i = this.gates.length - 1; i >= 0; i--) {
+        const gt = this.gates[i];
+        gt.z -= rate * dt;
+        const halfT = gt.thickness / 2;
+
+        if (gt.state !== 'done') {
+          if (gt.z > armZ) {
+            gt.state = 'approach';
+          } else if (gt.z > halfT) {
+            if (gt.state !== 'armed') {
+              gt.state = 'armed';
+              /* Sweep the road between the wall and the player. Suppressing
+               * obstacle SPAWNS during a gate is not enough on its own: the two run
+               * on independent schedules and a gate outruns an obstacle whenever the
+               * player slows down, which is exactly what a gate asks them to do. So
+               * anything still in flight in front of the player when the wall arms
+               * gets taken by the wall. Removed rather than counted as a dodge,
+               * because the player did not dodge it.
+               *
+               * Without this the game can demand two incompatible things at once —
+               * a duck beam during an ARMS OUT gate — which is unpassable and reads
+               * as the game being broken rather than hard. */
+              const swept = this.obstacles.filter((o) => !o.resolved && o.z > 0).length;
+              if (swept) {
+                this.obstacles = this.obstacles.filter((o) => o.resolved || o.z <= 0);
+                this.emit('gateSweep', { count: swept });
+              }
+              this.emit('gateArmed', { gate: gt, poseId: gt.poseId });
+            }
+          } else if (gt.z >= -halfT) {
+            if (gt.state !== 'contact') {
+              gt.state = 'contact';
+              /* Fixed on entry rather than recomputed per frame. The player's
+               * speed changes a lot during a gate — that is the point of the
+               * mechanic — and a moving target would mean the amount of hold
+               * demanded depended on how hard they happened to be running. */
+              const window = gt.thickness / Math.max(0.001, rate);
+              gt.required = window * cfg.minHeldFraction;
+              this.emit('gateContact', { gate: gt });
+            }
+            if (this.signals.poseError < this.gateToleranceFor(gt.poseId)) gt.held += dt;
+          } else {
+            this._resolveGate(gt);
+          }
+          if (gt.state === 'armed' || gt.state === 'contact') hold = true;
+        }
+
+        if (gt.z < cfg.despawnZ) this.gates.splice(i, 1);
+      }
+
+      this.gateHold = cfg.suspendVoid && hold;
+    }
+
+    _resolveGate(gt) {
+      const cfg = this.cfg.game.gate;
+      const g = this.cfg.game;
+      gt.state = 'done';
+      const pass = gt.required > 0 && gt.held >= gt.required;
+      gt.result = pass ? 'pass' : 'miss';
+
+      if (pass) {
+        this.gatesPassed++;
+        this.gap = clamp(this.gap + cfg.passGapReward, 0, g.gapMax);
+        this.emit('gatePassed', {
+          gate: gt, poseId: gt.poseId, gap: this.gap, passed: this.gatesPassed,
+        });
+      } else {
+        this.gatesMissed++;
+        /* The same consequence as any other obstacle, deliberately: gap and a
+         * shield, never an instant end. A missed gate should read as "that cost
+         * me", the same currency as a clipped hurdle, so the player does not
+         * have to learn a second penalty model. */
+        this._applyHit({ kind: 'gate' });
+        this.emit('gateMissed', {
+          gate: gt, poseId: gt.poseId, missed: this.gatesMissed,
+        });
+      }
+    }
+
     _updateObstacles(dt) {
       const g = this.cfg.game;
 
@@ -225,9 +438,19 @@ window.HP = window.HP || {};
        * obstacles at the same spacing, so pushing hard is never punished with a
        * denser obstacle field. */
       if (this.distance >= this.nextObstacleAt) {
-        this._spawnObstacle();
-        const jitter = (Math.random() * 2 - 1) * g.obstacleIntervalJitterM;
-        this.nextObstacleAt = this.distance + Math.max(20, g.obstacleIntervalM + jitter);
+        /* Never on top of a pose gate. A duck beam arriving while a gate demands
+         * ARMS OUT is an impossible instruction — the player cannot be ducking and
+         * arms-out at once — and it was happening: the two spawn on independent
+         * distance schedules, so they collide sooner or later. Holding the spawn
+         * rather than skipping it means the obstacle simply arrives after the gate
+         * instead of being silently dropped from the run. */
+        if (this.gates.some((gt) => gt.state !== 'done')) {
+          this.nextObstacleAt = this.distance + 8;
+        } else {
+          this._spawnObstacle();
+          const jitter = (Math.random() * 2 - 1) * g.obstacleIntervalJitterM;
+          this.nextObstacleAt = this.distance + Math.max(20, g.obstacleIntervalM + jitter);
+        }
       }
 
       for (let i = this.obstacles.length - 1; i >= 0; i--) {
@@ -332,6 +555,8 @@ window.HP = window.HP || {};
         seconds: this.t,
         hits: this.hits,
         dodged: this.dodged,
+        gatesPassed: this.gatesPassed,
+        gatesMissed: this.gatesMissed,
         shields: this.shields,
         peakSpeed: this.peakSpeed,
         avgPaceRatio: this.paceRatioSamples
@@ -474,10 +699,26 @@ window.HP = window.HP || {};
        * more: sky and ground moved to the course canvas underneath. */
       this.gSky = this.add.graphics();
       this.gRoad = this.add.graphics();
+      /* Pose gates. Behind the runner, because a gate the player has not reached
+       * yet is FARTHER than they are, so painter's order puts it underneath — that
+       * is what makes the character read as passing through the hole rather than
+       * being pasted over the wall. Wall mode draws its walls to this same layer
+       * for the same reason. */
+      this.gGates = this.add.graphics();
       this.gObstacles = this.add.graphics();
       this.gPlayer = this.add.graphics();
       this.gVoid = this.add.graphics();
       this.gFx = this.add.graphics();
+
+      /* Explicit depths rather than relying on creation order, so a subclass that
+       * adds a layer cannot silently reshuffle the stack. */
+      this.gSky.setDepth(0);
+      this.gRoad.setDepth(1);
+      this.gGates.setDepth(2);
+      this.gObstacles.setDepth(3);
+      this.gPlayer.setDepth(4);
+      this.gVoid.setDepth(5);
+      this.gFx.setDepth(6);
 
       // Star field for depth — fixed positions, twinkle only.
       this.stars = [];
@@ -616,6 +857,7 @@ window.HP = window.HP || {};
       this.cameras.main.setScroll(shakeX, shakeY);
 
       this._drawCourse(time);
+      this._drawGates();
       this._drawObstacles();
       this._drawPlayer();
       this._drawVoid();
@@ -656,6 +898,30 @@ window.HP = window.HP || {};
           g.fillRect(this.W - 4 - w, y, w, 2);
         }
       }
+    }
+
+    /* Pose gates, drawn with the SAME renderer wall mode uses — see
+     * HP.drawWallList in js/wall-mode.js.
+     *
+     * That file is a hard dependency of the app, not an optional one: js/main.js
+     * constructs HP.WallSim at module scope, so removing wall-mode.js stops the
+     * game booting at all (verified: "HP.WallSim is not a constructor"). An
+     * earlier version of this method carried a fallback that disabled gates when
+     * HP.drawWallList was missing — it was unreachable, because the app is already
+     * dead by then. The cheap existence checks below stay, since they cost nothing
+     * and a scene can legitimately be constructed before its layers exist, but
+     * they are not a graceful-degradation story and should not be read as one. */
+    _drawGates() {
+      if (!this.gGates || !HP.drawWallList) return;
+      const sim = this.sim;
+      HP.drawWallList(this, sim.gates, {
+        graphics: this.gGates,
+        poseError: sim.signals.poseError,
+        toleranceFor: (id) => sim.gateToleranceFor(id),
+        /* The opening follows the player's lane, so being off-centre is never a
+         * silent way to fail a pose that was held correctly. */
+        holeXFor: (s) => this.cx + (sim.lane - 1) * this.laneW * s,
+      });
     }
 
     _drawObstacles() {

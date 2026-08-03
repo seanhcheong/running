@@ -60,6 +60,13 @@ window.HP = window.HP || {};
     return SIM_POSE_KEYS[n - 1] || null;
   }
 
+  /** Which digit "is" this pose in sim mode, or null. Reverse of simPoseFor, so a
+   *  gate can tell the player which key to hold without a separate table. */
+  function simKeyFor(poseId) {
+    const i = SIM_POSE_KEYS.indexOf(poseId);
+    return i < 0 ? null : String((i + 1) % 10);
+  }
+
   /** "1 STAND TALL · 2 SQUAT · …" — built from the list above so the legend can
    *  never drift out of step with the keys that are actually bound. */
   function simPoseLegend(sep) {
@@ -234,6 +241,8 @@ window.HP = window.HP || {};
     hideLoading();
     util.hide(dom.hud);
     util.hide(dom.wallHud);
+    util.hide(dom.fitWrap);
+    dom.body.classList.remove('gate-live');
     setCameraMode('off');
 
     // Boot failed part-way, so release the camera rather than leaving the
@@ -372,6 +381,21 @@ window.HP = window.HP || {};
     sig.laneIntent = s.laneIntent;
     sig.ducking = s.ducking;
     sig.cadence = s.currentCadence;
+    sig.poseError = poseErrorForGate(s.poseNorm);
+  }
+
+  /* How far the body is from the shape the live pose gate is asking for. The ONLY
+   * place pose data crosses into the running sim beyond pace and intent, and it is
+   * one number for the same reason: GameSim stays free of pose code, so ?sim=1
+   * remains a full test of the mechanic.
+   *
+   * Infinity when there is no gate, which is also what "no reading" reports — that
+   * is fine here because the sim only ever consults it while a gate is live, and
+   * the HUD distinguishes the two cases from `tracked`. */
+  function poseErrorForGate(poseNorm) {
+    const gt = sim.activeGate();
+    if (!gt || !poseNorm) return Infinity;
+    return HP.poseLib.errorFor(poseNorm, gt.poseId, CONFIG.pose.minKeypointScore);
   }
 
   /* ===========================================================================
@@ -451,6 +475,8 @@ window.HP = window.HP || {};
     framingActive = false;
     mode = 'run';
     util.hide(dom.wallHud);
+    util.hide(dom.fitWrap);
+    dom.body.classList.remove('gate-live');
     sim.reset();
     util.hide(dom.hud);
     util.hide(dom.countdown);
@@ -613,6 +639,8 @@ window.HP = window.HP || {};
     framingActive = false;
     util.hide(dom.hud);
     util.hide(dom.wallHud);
+    util.hide(dom.fitWrap);
+    dom.body.classList.remove('gate-live');
     util.hide(dom.countdown);
     util.show(dom.calibPanel);
     setCameraMode('off');
@@ -634,6 +662,8 @@ window.HP = window.HP || {};
     wallSim.reset();
     util.hide(dom.hud);
     util.hide(dom.wallHud);
+    util.hide(dom.fitWrap);
+    dom.body.classList.remove('gate-live');
     util.hide(dom.countdown);
     util.show(dom.calibPanel);
     util.hide(dom.btnCalibSkip);
@@ -712,6 +742,7 @@ window.HP = window.HP || {};
     util.hide(dom.countdown);
     util.hide(dom.hud);
     util.show(dom.wallHud);
+    util.show(dom.fitWrap);
     setCameraMode(SIM_MODE ? 'off' : 'pip');
     if (SIM_MODE) {
       dom.wallSimKeys.innerHTML = 'HOLD ' + simPoseLegend();
@@ -787,14 +818,34 @@ window.HP = window.HP || {};
     dom.wallHealth.classList.toggle('hurt', wallSim.health === 2);
     dom.wallHealth.classList.toggle('critical', wallSim.health <= 1);
 
+    renderFitMeter(w, {
+      poseError: wallSim.signals.poseError,
+      tolerance: w ? wallSim.toleranceFor(w.poseId) : 0,
+      fit: wallSim.fit(),
+      tracked: wallSim.signals.tracked,
+      idleLabel: wallSim.walls.length ? 'GET READY' : 'CLEAR ROAD',
+    });
+  }
+
+  /* ===========================================================================
+   * The fit meter, shared by both modes
+   * ---------------------------------------------------------------------------
+   * Wall mode has one of these per wall; the running game shows the same widget
+   * while a pose gate is live. It was inline in updateWallHud() and is out here
+   * now because two copies of the banding and the worst-joint hint would drift,
+   * and the hint is the entire reason the widget exists.
+   *
+   * Driven by a plain object rather than by a sim, so it does not care which of
+   * the two sims is asking.
+   * ======================================================================== */
+  function renderFitMeter(w, m) {
     if (!w) {
       util.setText(dom.fitPose, '—');
       util.setText(dom.fitHint, '');
       dom.fitFill.style.width = '0%';
       dom.fitFill.className = 'fit-fill';
       dom.fitStatus.className = 'fit-status';
-      util.setText(dom.fitStatus,
-        wallSim.walls.length ? 'GET READY' : 'CLEAR ROAD');
+      util.setText(dom.fitStatus, m.idleLabel || '—');
       drawFitCanvas(null);
       return;
     }
@@ -802,9 +853,9 @@ window.HP = window.HP || {};
     const pose = HP.POSES[w.poseId];
     util.setText(dom.fitPose, pose ? pose.label : w.poseId);
 
-    const err = wallSim.signals.poseError;
-    const tol = wallSim.toleranceFor(w.poseId);
-    const fit = wallSim.fit();
+    const err = m.poseError;
+    const tol = m.tolerance;
+    const fit = m.fit;
     dom.fitFill.style.width = (fit * 100).toFixed(1) + '%';
 
     let band = 'far';
@@ -817,7 +868,7 @@ window.HP = window.HP || {};
      * "your left knee is wrong", which is the whole point of a fit meter. */
     let hint = '';
     if (!isFinite(err)) {
-      hint = tracker && !wallSim.signals.tracked ? 'CAN’T SEE YOU' : 'OUT OF FRAME';
+      hint = tracker && !m.tracked ? 'CAN’T SEE YOU' : 'OUT OF FRAME';
     } else if (band !== 'match' && tracker && tracker.state.poseNorm && pose) {
       const detail = HP.poseLib.poseErrorDetail(
         tracker.state.poseNorm, pose, CONFIG.pose.minKeypointScore);
@@ -965,6 +1016,8 @@ window.HP = window.HP || {};
     phase = 'over';
     if (summary.reason === 'complete') audio.milestone(); else audio.gameOver();
     util.hide(dom.wallHud);
+    util.hide(dom.fitWrap);
+    dom.body.classList.remove('gate-live');
     setCameraMode('off');
 
     util.setText(dom.overTitle,
@@ -996,6 +1049,31 @@ window.HP = window.HP || {};
     sim.on('jump', () => audio.jump());
     sim.on('laneChange', () => audio.laneChange());
     sim.on('obstacleWarn', (e) => audio.obstacleWarn(e.kind, util.now() * 1000));
+
+    /* --- pose gates -----------------------------------------------------
+     * A gate arming is the one moment in a run where the player has to STOP
+     * running and read something, so it gets an unmistakable cue and names the
+     * shape in words. The fit meter appears at the same instant. */
+    sim.on('gateArmed', (e) => {
+      const pose = HP.POSES[e.poseId];
+      audio.obstacleWarn('lane', util.now() * 1000);
+      let label = pose ? pose.label : 'POSE';
+      /* Name the key, not just the shape. In sim mode the player has no body in
+       * the loop, so "SQUAT" alone leaves them hunting the legend while the wall
+       * closes — which is exactly the time they cannot afford to look away. */
+      if (SIM_MODE) {
+        const key = simKeyFor(e.poseId);
+        if (key) label += '  [' + key + ']';
+      }
+      showToast(label, 'warn', 1400);
+    });
+    sim.on('gatePassed', () => {
+      audio.milestone();
+      showToast('THROUGH', 'good', 900);
+    });
+    /* No toast on a miss: _applyHit already fires one, and two at once reads as
+     * two separate penalties for a single mistake. */
+    sim.on('gateMissed', () => {});
 
     sim.on('milestone', (e) => {
       audio.milestone();
@@ -1094,6 +1172,27 @@ window.HP = window.HP || {};
     if (slow && !wasSlow) audio.paceDrop(nowMs);
     else if (!slow && wasSlow) audio.paceRecovered();
     lastPaceBand = band;
+
+    /* --- pose gate ------------------------------------------------------
+     * The fit meter is shown ONLY while a gate is armed or passing. It is a large
+     * widget and a permanent one would compete with the pace bar for the same
+     * glance during the 90% of a run that has no gate in it. */
+    const gate = sim.activeGate();
+    dom.body.classList.toggle('gate-live', !!gate);
+    if (gate) {
+      util.show(dom.fitWrap);
+      dom.fitTarget.style.left = (sim.gateFitThreshold() * 100).toFixed(1) + '%';
+      renderFitMeter(gate, {
+        poseError: sig.poseError,
+        tolerance: sim.gateToleranceFor(gate.poseId),
+        fit: sim.gateFit(),
+        tracked: sig.tracked,
+        idleLabel: '',
+      });
+    } else if (!dom.fitWrap.classList.contains('hidden')) {
+      util.hide(dom.fitWrap);
+    dom.body.classList.remove('gate-live');
+    }
 
     if (!SIM_MODE) checkFrameRate();
 
@@ -1230,6 +1329,11 @@ window.HP = window.HP || {};
     sig.tracked = true;
     sig.laneIntent = simInput.lane;
     sig.ducking = simInput.ducking;
+    /* 1.5 rather than Infinity for a wrong shape: the fit bar then reads as "not
+     * that shape" instead of "cannot see you", which is a different failure and
+     * gets different words. Same convention as applyWallSignals(). */
+    const gt = sim.activeGate();
+    sig.poseError = (gt && simPoseId && simPoseId === gt.poseId) ? 0 : 1.5;
   }
 
   function onKeyDown(e) {
@@ -1241,20 +1345,21 @@ window.HP = window.HP || {};
      * inert once the camera is the thing driving the pose. Silence read as "the
      * keys are broken", so say which it is instead of ignoring the press. */
     if (!SIM_MODE) {
-      if (mode === 'wall' && phase === 'running' && /^[0-9]$/.test(e.key)) {
-        showWallToast('KEYS NEED ?sim=1', 'hit', 1400);
+      if (phase === 'running' && /^[0-9]$/.test(e.key)) {
+        const say = (t) => (mode === 'wall' ? showWallToast : showToast)(t, 'hit', 1400);
+        say('KEYS NEED ?sim=1');
       }
       return;
     }
 
-    /* Wall Mode: a number key stands in for holding a pose. Held, not tapped —
-     * the wall wants the shape sustained through contact, and the sim should
-     * exercise that rather than paper over it. */
-    if (mode === 'wall') {
-      const picked = simPoseFor(e.key);
-      if (picked) { simPoseId = picked; e.preventDefault(); }
-      return;
-    }
+    /* A number key stands in for holding a pose, in BOTH modes now that the
+     * running game has pose gates. Held, not tapped — a gate wants the shape
+     * sustained through contact, and the sim should exercise that rather than
+     * paper over it. Handled before the run-mode switch so the two key sets do
+     * not have to know about each other. */
+    const picked = simPoseFor(e.key);
+    if (picked) { simPoseId = picked; e.preventDefault(); return; }
+    if (mode === 'wall') return;
 
     switch (e.key) {
       case 'ArrowUp': simInput.up = true; break;
@@ -1270,11 +1375,13 @@ window.HP = window.HP || {};
 
   function onKeyUp(e) {
     if (!SIM_MODE) return;
-    if (mode === 'wall') {
-      const picked = simPoseFor(e.key);
-      if (picked && simPoseId === picked) { simPoseId = null; e.preventDefault(); }
+    const picked = simPoseFor(e.key);
+    if (picked) {
+      if (simPoseId === picked) simPoseId = null;
+      e.preventDefault();
       return;
     }
+    if (mode === 'wall') return;
     switch (e.key) {
       case 'ArrowUp': simInput.up = false; break;
       case 'ArrowDown': simInput.down = false; break;
@@ -1443,7 +1550,8 @@ window.HP = window.HP || {};
         'SIM MODE — no camera.<br>' +
         '<b>RUN:</b> <kbd>↑</kbd>/<kbd>↓</kbd> pace, <kbd>←</kbd><kbd>→</kbd> ' +
         'lane, <kbd>Space</kbd> jump, <kbd>Shift</kbd> duck<br>' +
-        '<b>WALL:</b> hold a number key to "be" a pose — ' + simPoseLegend(', ');
+        '<b>POSES</b> (both modes — a run now has pose gates too): hold a ' +
+        'number key to "be" a pose — ' + simPoseLegend(', ');
     }
     setCameraMode('off');
     showScreen('screenStart');

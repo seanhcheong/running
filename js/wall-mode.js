@@ -406,18 +406,145 @@ window.HP = window.HP || {};
     failed: 0xff2b57,
   };
 
+  /* ===========================================================================
+   * The wall renderer, shared by both modes
+   * ---------------------------------------------------------------------------
+   * Draws wall mode's level walls AND the running game's pose gates. It was a
+   * method on WallScene; copying it into RunScene would have left two versions of
+   * the panel / bloom / cutout construction to drift apart, so it moved out here
+   * as a function over (scene, list). It only ever used RunScene facilities — cx,
+   * _scaleAt, _yAt, _torsoPx, roadHalfW — which is why nothing else had to change.
+   *
+   * `holeXFor` is the one genuine difference between the modes. In wall mode the
+   * player is always centred, so the opening is centred. In a run they are in one
+   * of three lanes, and an opening pinned to the road's centre would add a silent
+   * second rule: be in the middle lane, or fail a pose you were in fact holding.
+   * The opening tracks the player instead, so a gate tests only what it displays.
+   *
+   * @param {Phaser.Scene} scene  a RunScene or subclass
+   * @param {Array}  list         {poseId, z, thickness, state, held, required, result}
+   * @param {object} opts         graphics, poseError, toleranceFor, holeXFor, heightBs
+   */
+  function drawWallList(scene, list, opts) {
+    const o = opts || {};
+    const g = o.graphics || scene.gGates;
+    if (!g) return;
+    g.clear();
+    if (!list || !list.length) return;
+
+    const poseError = o.poseError === undefined ? Infinity : o.poseError;
+    const toleranceFor = o.toleranceFor || function (id) {
+      return (HP.POSES[id] && HP.POSES[id].tolerance) || scene.cfg.wall.defaultTolerance;
+    };
+    const holeXFor = o.holeXFor || function () { return scene.cx; };
+    const heightBs = o.heightBs || scene.cfg.wall.wallHeightBs;
+
+    // Far to near, so nearer walls paint over farther ones.
+    const list_ = list.slice().sort((a, b) => b.z - a.z);
+
+    for (let i = 0; i < list_.length; i++) {
+      const w = list_[i];
+      if (w.z < -6 || w.z > 120) continue;
+      const pose = HP.POSES[w.poseId];
+      if (!pose) continue;
+
+      const s = scene._scaleAt(w.z);
+      const yBase = scene._yAt(w.z);
+      const bsPx = scene._torsoPx() * s;
+      const alpha = clamp(s * 3.2, 0.12, 1);
+
+      /* --- the panel ----------------------------------------------------
+       * Modelled on resources/Holographic_wall_gates_*.jpeg: a sheet of lit
+       * glass with a rounded top and a hot neon rim, not the wireframe box
+       * this used to draw. Three passes — bloom, glass, rim — because the
+       * bloom is what makes it read as emitting light rather than as a
+       * translucent rectangle. */
+      const halfW = scene.roadHalfW * s * 1.06;
+    const holeX = holeXFor(s);
+      const height = heightBs * bsPx;
+      const top = yBase - height;
+      const radius = Math.min(halfW * 0.55, height * 0.30);
+      const rimW = Math.max(1.5, 3.4 * s);
+
+      // Outer bloom: a few concentric soft strokes. Phaser has no blur, and
+      // stacking translucent strokes is a cheap, stable stand-in.
+      for (let b = 3; b >= 1; b--) {
+        g.lineStyle(rimW + b * Math.max(2, 7 * s), WALL_COLORS.frame,
+          alpha * 0.05 * b);
+        g.strokeRoundedRect(scene.cx - halfW, top, halfW * 2, height, radius);
+      }
+      g.fillStyle(WALL_COLORS.glass, alpha * 0.46);
+      g.fillRoundedRect(scene.cx - halfW, top, halfW * 2, height, radius);
+      g.lineStyle(rimW, WALL_COLORS.frame, alpha * 0.95);
+      g.strokeRoundedRect(scene.cx - halfW, top, halfW * 2, height, radius);
+      // Bright sill, so the gate reads as standing on the road.
+      g.fillStyle(WALL_COLORS.frame, alpha * 0.55);
+      g.fillRect(scene.cx - halfW, yBase - rimW, halfW * 2, rimW);
+
+      /* --- the cutout --------------------------------------------------- */
+      // Hip line placed so the knees (target y ~ +1.0) land near the ground.
+      const hipY = yBase - 1.18 * bsPx;
+      const plot = (bx, by) => ({ x: holeX + bx * bsPx, y: hipY + by * bsPx });
+
+      let color = WALL_COLORS.far;
+      if (w.state === 'done') {
+        color = w.result === 'pass' ? WALL_COLORS.passed : WALL_COLORS.failed;
+      } else if (w.state === 'armed' || w.state === 'contact') {
+        const err = poseError;
+        const tol = toleranceFor(w.poseId);
+        if (!isFinite(err)) color = WALL_COLORS.miss;
+        else if (err < tol) color = WALL_COLORS.match;
+        else if (err < tol * 2) color = WALL_COLORS.close;
+        else color = WALL_COLORS.miss;
+      }
+
+      /* The cutout is a HOLE, per the reference: a void through the panel with
+       * a glowing edge, rather than a coloured sticker on it. That inverts
+       * where the fit feedback lives — the RIM now carries the grey/amber/green
+       * signal, which is why it is stroked in `color` while the fill stays
+       * dark. It also fixes a compositing problem for free: the void is opaque,
+       * so the body and limb shapes can no longer stack alpha against each
+       * other on a part-faded distant wall. */
+      drawPoseFigure(g, pose, plot, bsPx, {
+        /* This inflated pass is the fit signal's main carrier now that the
+         * cutout itself is a dark void: it reads as coloured light spilling
+         * out around the hole. The thin rim alone is too little colour to
+         * judge at a glance. */
+        color: color, alpha: alpha * 0.34, inflate: 0.13,
+      });
+      drawPoseFigure(g, pose, plot, bsPx, {
+        color: WALL_COLORS.hole,
+        rimColor: color,
+        /* Deliberately thin. An arm is ~0.25 torsos across, so a rim of half
+         * that on each side leaves no void between them and a near gate's
+         * arms-out cutout collapses into a solid bar. */
+        rimWidth: Math.max(1.0, 1.7 * s),
+        /* Not opaque: the opening has to show the road through it, or it stops
+         * reading as an opening. Low enough that the frosted panel around it is
+         * clearly the more solid of the two. */
+        alpha: alpha * 0.30,
+      });
+
+      /* --- hold progress, drawn on the wall while passing through -------- */
+      if (w.state === 'contact' && w.required > 0) {
+        const frac = clamp(w.held / w.required, 0, 1);
+        const barW = halfW * 1.6;
+        const barY = top - 8 * s - 4;
+        g.fillStyle(0x000000, alpha * 0.5);
+        g.fillRect(scene.cx - barW / 2, barY, barW, Math.max(3, 7 * s));
+        g.fillStyle(WALL_COLORS.match, alpha);
+        g.fillRect(scene.cx - barW / 2, barY, barW * frac, Math.max(3, 7 * s));
+      }
+    }
+  }
+
   class WallScene extends HP.RunScene {
     create() {
       super.create();
-      /* Explicit depths: walls must sit behind the runner, and RunScene's layers
-       * are otherwise ordered purely by creation. */
-      this.gSky.setDepth(0);
-      this.gRoad.setDepth(1);
-      this.gWalls = this.add.graphics().setDepth(2);
-      this.gObstacles.setDepth(3);
-      this.gPlayer.setDepth(4);
-      this.gVoid.setDepth(5);
-      this.gFx.setDepth(6);
+      /* RunScene now owns the depth scheme and creates the behind-the-runner layer
+       * itself, for its own pose gates. Wall mode draws to the same layer rather
+       * than adding a second one at the same depth. */
+      this.gWalls = this.gGates;
 
       this.sim.on('wallPassed', () => { this.flash = 0.35; });
       this.sim.on('wallMissed', () => { this.shake = 1; this.flash = 1; });
@@ -465,106 +592,11 @@ window.HP = window.HP || {};
     }
 
     _drawWalls() {
-      const g = this.gWalls;
-      const sim = this.sim;
-      g.clear();
-
-      // Far to near, so nearer walls paint over farther ones.
-      const list = sim.walls.slice().sort((a, b) => b.z - a.z);
-
-      for (let i = 0; i < list.length; i++) {
-        const w = list[i];
-        if (w.z < -6 || w.z > 120) continue;
-        const pose = HP.POSES[w.poseId];
-        if (!pose) continue;
-
-        const s = this._scaleAt(w.z);
-        const yBase = this._yAt(w.z);
-        const bsPx = this._bsPx(s);
-        const alpha = clamp(s * 3.2, 0.12, 1);
-
-        /* --- the panel ----------------------------------------------------
-         * Modelled on resources/Holographic_wall_gates_*.jpeg: a sheet of lit
-         * glass with a rounded top and a hot neon rim, not the wireframe box
-         * this used to draw. Three passes — bloom, glass, rim — because the
-         * bloom is what makes it read as emitting light rather than as a
-         * translucent rectangle. */
-        const halfW = this.roadHalfW * s * 1.06;
-        const height = this.cfg.wall.wallHeightBs * bsPx;
-        const top = yBase - height;
-        const radius = Math.min(halfW * 0.55, height * 0.30);
-        const rimW = Math.max(1.5, 3.4 * s);
-
-        // Outer bloom: a few concentric soft strokes. Phaser has no blur, and
-        // stacking translucent strokes is a cheap, stable stand-in.
-        for (let b = 3; b >= 1; b--) {
-          g.lineStyle(rimW + b * Math.max(2, 7 * s), WALL_COLORS.frame,
-            alpha * 0.05 * b);
-          g.strokeRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
-        }
-        g.fillStyle(WALL_COLORS.glass, alpha * 0.46);
-        g.fillRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
-        g.lineStyle(rimW, WALL_COLORS.frame, alpha * 0.95);
-        g.strokeRoundedRect(this.cx - halfW, top, halfW * 2, height, radius);
-        // Bright sill, so the gate reads as standing on the road.
-        g.fillStyle(WALL_COLORS.frame, alpha * 0.55);
-        g.fillRect(this.cx - halfW, yBase - rimW, halfW * 2, rimW);
-
-        /* --- the cutout --------------------------------------------------- */
-        // Hip line placed so the knees (target y ~ +1.0) land near the ground.
-        const hipY = yBase - 1.18 * bsPx;
-        const plot = (bx, by) => ({ x: this.cx + bx * bsPx, y: hipY + by * bsPx });
-
-        let color = WALL_COLORS.far;
-        if (w.state === 'done') {
-          color = w.result === 'pass' ? WALL_COLORS.passed : WALL_COLORS.failed;
-        } else if (w.state === 'armed' || w.state === 'contact') {
-          const err = sim.signals.poseError;
-          const tol = sim.toleranceFor(w.poseId);
-          if (!isFinite(err)) color = WALL_COLORS.miss;
-          else if (err < tol) color = WALL_COLORS.match;
-          else if (err < tol * 2) color = WALL_COLORS.close;
-          else color = WALL_COLORS.miss;
-        }
-
-        /* The cutout is a HOLE, per the reference: a void through the panel with
-         * a glowing edge, rather than a coloured sticker on it. That inverts
-         * where the fit feedback lives — the RIM now carries the grey/amber/green
-         * signal, which is why it is stroked in `color` while the fill stays
-         * dark. It also fixes a compositing problem for free: the void is opaque,
-         * so the body and limb shapes can no longer stack alpha against each
-         * other on a part-faded distant wall. */
-        drawPoseFigure(g, pose, plot, bsPx, {
-          /* This inflated pass is the fit signal's main carrier now that the
-           * cutout itself is a dark void: it reads as coloured light spilling
-           * out around the hole. The thin rim alone is too little colour to
-           * judge at a glance. */
-          color: color, alpha: alpha * 0.34, inflate: 0.13,
-        });
-        drawPoseFigure(g, pose, plot, bsPx, {
-          color: WALL_COLORS.hole,
-          rimColor: color,
-          /* Deliberately thin. An arm is ~0.25 torsos across, so a rim of half
-           * that on each side leaves no void between them and a near gate's
-           * arms-out cutout collapses into a solid bar. */
-          rimWidth: Math.max(1.0, 1.7 * s),
-          /* Not opaque: the opening has to show the road through it, or it stops
-           * reading as an opening. Low enough that the frosted panel around it is
-           * clearly the more solid of the two. */
-          alpha: alpha * 0.30,
-        });
-
-        /* --- hold progress, drawn on the wall while passing through -------- */
-        if (w.state === 'contact' && w.required > 0) {
-          const frac = clamp(w.held / w.required, 0, 1);
-          const barW = halfW * 1.6;
-          const barY = top - 8 * s - 4;
-          g.fillStyle(0x000000, alpha * 0.5);
-          g.fillRect(this.cx - barW / 2, barY, barW, Math.max(3, 7 * s));
-          g.fillStyle(WALL_COLORS.match, alpha);
-          g.fillRect(this.cx - barW / 2, barY, barW * frac, Math.max(3, 7 * s));
-        }
-      }
+      drawWallList(this, this.sim.walls, {
+        graphics: this.gWalls,
+        poseError: this.sim.signals.poseError,
+        toleranceFor: (id) => this.sim.toleranceFor(id),
+      });
     }
   }
 
@@ -573,4 +605,6 @@ window.HP = window.HP || {};
   HP.buildLevel = buildLevel;
   HP.WALL_STARTER_SPEC = STARTER_SPEC;
   HP.drawPoseFigure = drawPoseFigure;
+  HP.drawWallList = drawWallList;
+  HP.WALL_COLORS = WALL_COLORS;
 })(window.HP);

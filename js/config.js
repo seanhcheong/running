@@ -397,6 +397,60 @@ window.HP.CONFIG = {
     // late ones.
     laneHitTolerance: 0.55,
 
+    /* --- Pose gates ---------------------------------------------------------
+     * The hold-a-pose mechanic, inside the RUNNING game. A wall with a
+     * pose-shaped hole closes on the player, who has to be in that shape as it
+     * arrives. Distinct from wall mode (js/wall-mode.js), which is a separate
+     * auto-scrolling scene where the player never runs; this is a punctuation
+     * mark in a run.
+     *
+     * Two mechanics here do NOT carry over from wall mode, and both are forced by
+     * the fact that the player controls the world speed:
+     *
+     * THE WALL HAS ITS OWN MOMENTUM.  Wall mode auto-scrolls, so contact duration
+     * is thickness/speed and that is that. In a run, holding a pose means you stop
+     * running, so speed falls toward zero and thickness/speed diverges — a wall
+     * that closes at the player's speed would hang in the air forever and the
+     * mechanic could be stalled indefinitely by standing still. So a gate
+     * approaches at whichever is FASTER, the world or `approachSpeed`. While
+     * running normally it tracks the road and looks natural; the moment you stop
+     * to pose it keeps coming on its own.
+     *
+     * THE VOID WAITS.  A gate demands you stop running, and the void's whole
+     * premise is that not running kills you. Stacking them means every gate is a
+     * punishment for engaging with it, so the void's advance is suspended from the
+     * moment a gate arms until it resolves. The gate is then a self-contained
+     * challenge: the void is the running threat, the wall is the posing threat,
+     * and they do not overlap. Set suspendVoid false to stack them anyway — it is
+     * a harder, meaner game and worth trying once the poses are comfortable. */
+    gate: {
+      enabled: true,
+      firstAtM: 110,             // no gate before this, so the run establishes itself
+      intervalM: 130,            // distance between gates
+      intervalJitterM: 25,
+      spawnZ: 120,               // visible from here
+      despawnZ: -12,
+      /* Lead time between the pose being DEMANDED (the gate arms, the prompt and
+       * fit meter appear) and the wall arriving. This is the whole difficulty
+       * knob: it is how long the player has to read the shape and get into it.
+       * Generous, because reading a pose while out of breath is the hard part. */
+      armSeconds: 3.0,
+      thickness: 5,              // world units; contact window = thickness/speed
+      minHeldFraction: 0.55,     // fraction of the window the pose must be held
+      approachSpeed: 11,         // floor speed, m/s — see THE WALL HAS ITS OWN MOMENTUM
+      suspendVoid: true,         // see THE VOID WAITS
+      passGapReward: 10,         // metres of gap refunded for a clean pass
+      /* Standing poses only. The floor poses (burpee, push-up, plank) are absent
+       * deliberately and not for lack of art: pose matching normalises by the
+       * shoulder-to-hip distance to cancel out how far away the player is
+       * standing, and that distance collapses toward zero when the torso points
+       * at the camera. They need a different anchor, and it is also still untested
+       * whether MoveNet reports usable keypoints for a prone body from a phone on
+       * the floor. See docs/ART-BRIEF.md. */
+      poses: ['t_pose', 'squat_bottom', 'star', 'reach_up',
+              'knee_up_left', 'knee_up_right'],
+    },
+
     // --- Cost of a hit (a stacking stressor, never an instant fail) --------
     startingShields: 3,
     hitGapLoss: 12,            // metres of gap the void instantly gains
