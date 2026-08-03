@@ -193,3 +193,245 @@ tall tile gives more track per loop.
 - Props/obstacles: is the background one flat colour, or has it been shaded and
   gradiented? A gradient background still keys, but less cleanly.
 - Everything: any text or watermark baked in? Those key as part of the subject.
+
+---
+---
+
+# Art brief — the character: a run cycle, and wall poses
+
+Added after the first pass on the character shipped and the runner was seen
+moving. Two separate asks; the run cycle is the urgent one.
+
+## Why the runner needs more frames than it has
+
+The runner is currently ONE frame — `state-run.png`, a square-on back view —
+moved by transforms: bob, sway, squash and a small rock. That was a deliberate
+choice and the reasoning behind it was partly wrong.
+
+The argument was that leg position does not read from directly behind, on the
+evidence that three commissioned stride frames measured 0.4–0.7% pairwise
+silhouette difference. That measurement was real but it does not support that
+conclusion. **What it actually showed is that the generator returned the same
+render three times.** It was a measurement of a generator failure, and using it
+as a fact about anatomy was a mistake. Alternating legs read fine from behind —
+what does not read is the *forward* swing, which foreshortens to nothing. The
+part that reads is vertical: the trailing heel kicking up, the sole turning
+toward the camera, the stance leg straightening.
+
+The visible consequence is a waddle. With no alternating legs, the only
+once-per-stride motion is lateral sway, and sway had been pushed up to cover for
+them. Measured against a 248px body: lateral travel 9.2% of body height at once
+per stride, vertical bob 6.0% at twice per stride — so the largest and slowest
+motion on screen was a sideways lurch. A real runner from behind is the inverse:
+5–7% vertical, 1–2% lateral. Sway is now pinned at 2.0% with the ratio asserted
+in the harness, which removes most of the hobble, but a single frame cannot do
+the rest.
+
+## 5. Back-view run cycle — the highest-value character asset
+
+**8 cells, 4 columns × 2 rows.** Six works. Even four (the two contacts and the
+two flights) would fix the hobble, because the alternation is the point.
+
+Row 1 is the LEFT foot's step, row 2 is the RIGHT foot's — the same four
+moments, mirrored. They cannot be produced by flipping row 1 here: the render is
+lit from one side and the two halves of the silhouette differ by 24–32
+luminance units, so a mirrored frame flips the highlight and flickers.
+
+Per step, the four moments, which are described this way because they are
+*categorically* different rather than incrementally different. The last attempt
+asked for "three stride phases" and got one pose three times; a generator will
+collapse anything it can read as "the same pose, slightly further along":
+
+1. **Contact** — one foot flat on the ground directly below the hips, leg
+   straight. The other leg trails behind, knee bent hard, heel kicked up toward
+   the tail, **the sole of that foot turned toward the camera**. Body at its
+   lowest and widest.
+2. **Passing** — both feet close together beneath the body. The stance foot flat,
+   the other's toe just leaving the ground. The narrowest, most compact frame.
+3. **Push-off** — stance leg fully straight, that heel rising off the ground,
+   toe still down. The other knee has swung forward and is mostly hidden by the
+   body — only a sliver of it shows past the hip. Body rising.
+4. **Flight** — **both feet clear of the ground.** Trailing foot high behind, sole
+   square to the camera; leading foot tucked under and forward, hidden. Body at
+   its highest and narrowest.
+
+The sole-to-camera in frames 1 and 4 is the single strongest cue that this is a
+back view of something running rather than a shape sliding along. It is worth
+saying twice in the prompt.
+
+## 6. Front-view exercise poses — optional, wall mode already works
+
+Wall mode has ten poses and they are drawn from the rig, so nothing is blocked
+on art. Rendered art would upgrade two things at once: the shape cut out of the
+gate, and the "get into this pose" reference. One PNG serves both — the cutout
+comes from its alpha channel.
+
+**Five of these already exist and just are not shipping.** `clap`, `jumping`,
+`recovery_upward`, `stretching` and `standing` are front views already extracted
+from the first character sheet; they were dropped from `keep` in
+`tools/extract-sprites.js` because nothing consumed them. Re-enabling them costs
+one line, so do not commission those again.
+
+Genuinely missing, and worth generating — front views, chosen because each is a
+**distinct silhouette at gate distance**, which is the only thing that matters
+for a shape the player has to match while out of breath:
+
+| Pose | Shape |
+| --- | --- |
+| `squat_bottom` | hips low, knees wide, arms straight forward |
+| `t_pose` | arms straight out sideways, level with the shoulders, feet together |
+| `knee_up_left` / `_right` | one knee lifted to hip height, arms bent at the sides |
+| `star` | arms up in a wide V and legs wide apart, at the same instant |
+| overhead press | elbows out wide, hands at head height — a goalpost |
+| side lunge L / R | feet very wide, one knee deeply bent, body shifted over it |
+
+### What NOT to generate yet, and why
+
+**No floor poses.** Burpees, push-ups and planks are in the mockup and cannot be
+tracked yet, for two independent reasons:
+
+1. Pose matching divides every measurement by the shoulder-mid → hip-mid
+   distance to cancel out how far the player is standing from the phone. When
+   the torso points at the camera that distance collapses toward zero and the
+   normalisation blows up. Those poses need a different anchor.
+2. It is not known whether MoveNet reports usable keypoints for a prone body
+   from a phone on the floor angled up. **This needs a physical test** — phone on
+   the floor, get into a plank, see whether the skeleton tracks — and no amount
+   of work here settles it.
+
+Art for a mechanic that cannot ship is wasted, so this waits on the test.
+
+## Format for both sheets
+
+Same as the road assets above, plus three things specific to a character sheet,
+each of which is a mistake a previous sheet actually made:
+
+- **Flat magenta `#FF00FF` background, and NO ground shadow under the feet.**
+  The penguin sheet came in this way and keyed almost perfectly: 0.2% edge
+  contamination. The first character sheet came in on white with rainbow ground
+  shadows pooled under the feet, and because the shadow touches the feet it
+  merges into the character's own shape and cannot be removed afterwards — it
+  forced a hue-window key that then clipped the character's own dark creases and
+  tore a notch through its crotch.
+- **Locked-off camera, dead behind at hip height.** Not above, not
+  three-quarter. The previous sheet's upright pose came in turned, measuring 19%
+  silhouette mirror mismatch, and a character angled away from the road it is
+  running down looks wrong in a way no code can fix. Square-on measures 1%.
+- **The character the same size in every cell, feet on a common baseline.** The
+  extractor applies one scale factor per sheet precisely so relative pose sizes
+  survive; if the generator drifts the camera in or out between cells, the
+  character will pulse as the game switches frames.
+
+Send the existing `assets/sprites/state-run.png` along as a character reference
+if the tool accepts one, and generate each sheet in a single pass so the
+character stays consistent within it.
+
+---
+
+## Prompts
+
+### 5. Back-view run cycle — aspect 2:1, 4 columns × 2 rows
+
+```
+A reference sheet of one 3D-rendered cartoon penguin character, arranged in a
+strict 4 column by 2 row grid, 8 cells total, seen from DIRECTLY BEHIND.
+
+The character: a plump rounded penguin, soft matte pastel teal, smooth clay-like
+surface, no outlines, gentle studio lighting. Wide heavy base tapering to a small
+rounded head with no neck. Short stubby flipper arms at its sides. Two small
+webbed feet. No face is visible because we are behind it.
+
+Camera: locked off and identical in every cell — same position, same distance,
+same lens, at the character's hip height, level, pointing straight at its back.
+The character is centred in every cell, its spine vertical, both flippers
+symmetric about the spine. It must be exactly the same size in every cell and
+its feet must sit on the same baseline height in every cell. No turning, no
+three-quarter angle, no top-down angle.
+
+Background: FLAT SOLID MAGENTA #FF00FF, edge to edge, in every cell. NO ground
+shadow, NO contact shadow, NO reflection, no floor, no grid lines, no text,
+no labels, no numbers, no borders between cells.
+
+The 8 cells are 8 moments of a running stride. Top row is the LEFT foot's step,
+bottom row is the RIGHT foot's step — the same four moments with the legs
+swapped. The legs must be clearly and obviously different between cells:
+
+Top row, left to right:
+1. LEFT foot flat on the ground directly under the hips, left leg straight. The
+   RIGHT leg trails far behind, knee bent hard, heel kicked up high toward the
+   tail, and THE SOLE OF THE RIGHT FOOT IS TURNED TO FACE THE CAMERA. Body at
+   its lowest, squashed slightly wider.
+2. Both feet close together directly beneath the body. LEFT foot flat, RIGHT toe
+   just barely lifting off the ground. The most compact, narrowest pose.
+3. LEFT leg fully straight and pushing, LEFT heel lifted off the ground with the
+   toe still down. RIGHT knee has swung forward and is hidden behind the body,
+   only a small sliver visible past the hip. Body stretched taller.
+4. BOTH FEET COMPLETELY OFF THE GROUND, mid-air. RIGHT foot high up behind, ITS
+   SOLE SQUARE TO THE CAMERA. LEFT foot tucked forward under the body and hidden.
+   Body at its tallest and narrowest.
+
+Bottom row, left to right: exactly the same four moments 1-4, with left and
+right legs swapped, so the LEFT foot is the one trailing behind with its sole
+showing.
+
+Style: soft pastel clay, matte, no outlines, no cel shading, no text anywhere.
+```
+
+### 6. Front-view exercise poses — aspect 3:2, 3 columns × 2 rows
+
+```
+A reference sheet of one 3D-rendered cartoon penguin character, arranged in a
+strict 3 column by 2 row grid, 6 cells total, FACING THE CAMERA head on.
+
+The character: a plump rounded penguin, soft matte pastel teal, smooth clay-like
+surface, no outlines, gentle studio lighting. Wide heavy base tapering to a small
+rounded head with no neck. Short stubby flipper arms. Two small webbed feet. A
+simple friendly face: two small dark oval eyes and a small mouth. Same character
+in every cell.
+
+Camera: locked off and identical in every cell — same position, same distance,
+same lens, at the character's chest height, level, pointing straight at its
+front. The character is centred and facing directly forward in every cell,
+exactly the same size in every cell, feet on the same baseline height. No
+turning, no three-quarter angle, no profile views.
+
+Background: FLAT SOLID MAGENTA #FF00FF, edge to edge, in every cell. NO ground
+shadow, NO contact shadow, no floor, no grid lines, no text, no labels, no
+numbers, no borders between cells.
+
+The 6 poses, each held still and read as a clear distinct silhouette:
+
+Top row, left to right:
+1. DEEP SQUAT — hips dropped low, knees bent and pushed out wide to the sides,
+   both flippers held straight out forward.
+2. T-POSE — both flippers straight out sideways, level with the shoulders, as
+   wide as they go. Feet together, legs straight, standing tall.
+3. ONE KNEE UP — standing on the left leg, RIGHT knee lifted up to hip height,
+   flippers bent and held at the sides.
+
+Bottom row, left to right:
+4. STAR JUMP — both flippers raised up and out in a wide V above the head AND
+   both legs spread wide apart at the same time, feet planted.
+5. OVERHEAD PRESS — elbows bent and pushed out wide to both sides, flipper tips
+   up at head height, forming a goalpost shape. Legs straight.
+6. SIDE LUNGE — feet planted very wide apart, the RIGHT knee bent deeply with
+   the body shifted across over that leg, LEFT leg straight. Flippers forward
+   for balance.
+
+Style: soft pastel clay, matte, no outlines, no cel shading, no text anywhere.
+```
+
+### If the run cycle comes back with identical cells
+
+That is the failure that already happened once, and it is detectable without
+opening the file — measure it rather than eyeballing it:
+
+```
+node tools/extract-sprites.js     # then compare pairwise silhouette difference
+```
+
+Cells of a genuine stride differ by well over 5% of their silhouettes. Anything
+under about 2% means the generator produced one pose repeatedly, and the fix is
+to make the cell descriptions *more categorical* — push on "both feet off the
+ground" and "the sole faces the camera", which are things it either drew or
+did not, rather than on degrees of swing.

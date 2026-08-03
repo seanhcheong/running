@@ -831,7 +831,7 @@ window.HP = window.HP || {};
       const contact = sim.airborne ? 1 : (1 + Math.cos(this.runPhase * 2)) / 2;
       // Body rises off the ground between footfalls. ~6% of body height, which is
       // in the range a real runner's centre of mass travels.
-      const bob = sim.airborne ? 0 : -(1 - contact) * 5.5 * scale;
+      const bob = sim.airborne ? 0 : -(1 - contact) * 6.2 * scale;
       const groundContact = this.groundY - jumpPx + bob;
 
       const legLen = (30 - duck * 13) * scale;
@@ -854,7 +854,18 @@ window.HP = window.HP || {};
        *   sway    the body shifts side to side ONCE per stride, because weight
        *           goes onto one foot and then the other. Driven by phase directly
        *           rather than by `contact`, which is deliberately blind to which
-       *           foot is down. The single most effective back-view cue.
+       *           foot is down.
+       *
+       *           SMALL, and that is the whole point. This was 4.2 and it made the
+       *           character waddle: measured against a 248px body, lateral travel
+       *           came to 9.2% of body height at once per stride while the vertical
+       *           bob was 6.0% at twice per stride, so the biggest, slowest motion
+       *           on screen was a sideways lurch. A real runner seen from behind is
+       *           the other way round — the centre of mass oscillates 5-7% of height
+       *           vertically and the torso sways only 1-2% — because what actually
+       *           alternates is the legs, and a single frame has none. Overdriving
+       *           sway to stand in for that does not read as running, it reads as
+       *           hobbling. See RUN_SWAY_MAX_FRACTION in the harness.
        *   squash  the body compresses on each footfall and widens as it does,
        *           conserving apparent mass. Squared, so it is a sharp landing
        *           rather than a slow pulse.
@@ -865,7 +876,7 @@ window.HP = window.HP || {};
        *           which is what a forward lean looks like from behind. Rig path
        *           only, and see the sprite transform below for why.
        */
-      const strideSway = sim.airborne ? 0 : Math.sin(this.runPhase) * 4.2 * scale;
+      const strideSway = sim.airborne ? 0 : Math.sin(this.runPhase) * 0.9 * scale;
       const squash = sim.airborne ? 0 : contact * contact * 0.06;
       const twist = sim.airborne ? 0 : Math.sin(this.runPhase) * 3.2 * scale;
       const leanNorm = clamp(sim.speed / (this.cfg.game.speedAtTargetPace * 1.3), 0, 1);
@@ -929,7 +940,7 @@ window.HP = window.HP || {};
                * the lane change asks for. Small: past about 0.05 rad it stops
                * reading as running and starts reading as staggering. */
               rot: (tilt / Math.max(1, this.laneW)) * 0.55 +
-                   Math.sin(this.runPhase) * 0.030,
+                   Math.sin(this.runPhase) * 0.012,
               /* Widen as it compresses, so apparent mass is conserved. */
               sx: 1 + squash * 0.85,
               sy: 1 - squash,
