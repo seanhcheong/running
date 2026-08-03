@@ -1379,9 +1379,10 @@ window.HP = window.HP || {};
     /* Course art. Deliberately not awaited — the start screen must appear
      * immediately, and the course renderer draws flat colours until (or unless)
      * the tiles arrive. */
-    /* Rendered frames for the discrete states. Same posture as the course art:
-     * not awaited, and a failure just leaves those states procedural. */
-    HP.avatar.states.load(['state-idle', 'state-jump', 'state-duck', 'state-hit'])
+    /* Rendered frames for the character. Same posture as the course art: not
+     * awaited, and a failure just leaves those states procedural. state-run is
+     * first because it is also the scale reference — see states.REF. */
+    HP.avatar.states.load(['state-run', 'state-jump', 'state-duck', 'state-hit'])
       .then((got) => {
         if (got.length < 4) {
           console.info('[HP] state sprites available: ' +

@@ -696,16 +696,16 @@ window.HP = window.HP || {};
   /* ===========================================================================
    * STATE SPRITES
    * ---------------------------------------------------------------------------
-   * The rendered character, used for the DISCRETE states only — jump, duck, hit.
-   * The run cycle stays procedural, and that is a measured decision rather than
-   * a shortcut: the game's camera is behind the character, and from directly
-   * behind the body occludes the legs. Three commissioned stride frames came
-   * back differing by 0.4-0.7% of their silhouettes, i.e. indistinguishable. A
-   * back-view run has to be sold by body motion — bob, sway, squash,
-   * counter-rotation — which is exactly what a rig does and a still cannot.
+   * The rendered character, for every state INCLUDING the run.
    *
-   * Discrete states are the opposite case: one pose, held, no interpolation. A
-   * single rendered frame is strictly better than anything drawn from ellipses.
+   * Using a still frame for the run looks like a compromise and is not, and the
+   * measurement that made the case is the same one that killed the commissioned
+   * run cycle: three deliberately different stride frames came back differing by
+   * 0.4-0.7% of their silhouettes, because from directly behind the body occludes
+   * the legs. Leg position does not read at this camera angle. What DOES sell a
+   * back-view run is bob, sway, squash and lean — all of which are transforms, and
+   * a transform applies to a rendered frame exactly as well as to a rig. So the
+   * one thing a still cannot do is the one thing that does not matter here.
    *
    * Nothing here is required. Every method degrades to "not available" so the
    * procedural path still covers every state on its own.
@@ -724,10 +724,94 @@ window.HP = window.HP || {};
     },
     has(name) { return !!states.imgs[name]; },
     get(name) { return states.imgs[name] || null; },
-    /** Height of the reference pose, for scaling every other state to match. */
+    /* Height of the reference pose. Every state is drawn at
+     * (procedural avatar height / this), one factor for all of them, so a jump
+     * stays proportionally taller than a crouch and the character never changes
+     * size when the state changes. Sizing each frame to a fixed height instead
+     * would make a crouch and a jump identical, which is the exact pulsing this
+     * avoids.
+     *
+     * The run frame is the reference because it is the one on screen almost all
+     * the time, so it is the one whose size should be exactly right rather than
+     * inherited. tools/extract-sprites.js normalises BOTH source sheets to the
+     * same standing height, which is what makes a reference on one sheet valid for
+     * frames taken from the other. */
+    REF: ['state-run', 'state-idle'],
     refHeight() {
-      const idle = states.imgs['state-idle'];
-      return idle ? idle.naturalHeight : 0;
+      for (const n of states.REF) {
+        if (states.imgs[n]) return states.metrics(n).bodyH;
+      }
+      return 0;
+    },
+    origin(name) { return states.metrics(name); },
+
+    /* --- what a frame's pixels actually say --------------------------------
+     * Three numbers, all measured from the frame rather than assumed from its
+     * canvas, because the canvas is padded and the pose is not centred in it.
+     *
+     *   x, y    the origin. The sprite is positioned by its feet on the road and
+     *           its lane by its body centre, and neither is a canvas corner:
+     *
+     *             vertically   the extractor pads each cutout by a few pixels, and
+     *                          by a different few per sheet because the sheets are
+     *                          scaled differently. Anchoring at the canvas bottom
+     *                          floats the character above the road, by an amount
+     *                          that changes when it jumps.
+     *             horizontally the canvas centre is the centre of the pose's
+     *                          BOUNDING BOX. On a crouch with one flipper flung
+     *                          out that is not the centre of the body, so the
+     *                          character slides sideways on ducking even though its
+     *                          lane never changed.
+     *
+     *           The horizontal anchor is the centroid of the whole silhouette
+     *           rather than of the contact patch at the feet. Both are defensible;
+     *           the silhouette wins because what reads as "off centre" to the eye
+     *           is the body's mass sitting off the lane, not the feet — and on the
+     *           run frame, the only one on screen long enough to judge, the two
+     *           agree anyway since it is symmetric to within 1%.
+     *
+     *   bodyH   the opaque height, which is what the scale factor should divide by.
+     *           The padded canvas height was ~3% larger, so every frame drew that
+     *           much shorter than the layout asked for.
+     *
+     * Measured once per frame and cached: this reads back a canvas, which is not
+     * something to do per frame. */
+    _metrics: {},
+    metrics(name) {
+      const cached = states._metrics[name];
+      if (cached) return cached;
+      const img = states.imgs[name];
+      /* The canvas corner, i.e. exactly the old behaviour — so an unmeasurable
+       * frame degrades rather than breaks. Not cached, so a frame measured before
+       * its pixels were decodable gets another chance. */
+      const fallback = { x: 0.5, y: 1, bodyH: img ? img.naturalHeight : 0 };
+      if (!img || !img.naturalWidth) return fallback;
+      let m = null;
+      try {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, w, h).data;
+        let sumX = 0, n = 0, top = -1, low = -1;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            if (d[(y * w + x) * 4 + 3] > 128) {
+              sumX += x; n++; low = y;
+              if (top < 0) top = y;
+            }
+          }
+        }
+        if (n) {
+          m = { x: (sumX / n + 0.5) / w, y: (low + 1) / h, bodyH: low - top + 1 };
+        }
+      } catch (e) {
+        /* A canvas read can throw on a tainted canvas. */
+      }
+      if (!m) return fallback;
+      states._metrics[name] = m;
+      return m;
     },
   };
 
