@@ -494,7 +494,59 @@ window.HP = window.HP || {};
    *   baseline — the calibration flow ends with its own countdown, so counting
    *   again there would just delay a player who is already running.
    */
+  /* ===========================================================================
+   * KEEPING THE SCREEN ON
+   * ---------------------------------------------------------------------------
+   * Not a nice-to-have for this game, it is a hard requirement, and it was
+   * missing. The player is standing 6-10 feet away running in place and touching
+   * nothing, so every phone's idle timer fires mid-run: the screen dims, then
+   * locks, and the camera feed and the run go with it. No other mobile
+   * shortcoming matters as much, because this one ends the session.
+   *
+   * navigator.wakeLock is the standard answer (Chrome/Android, Safari 16.4+). The
+   * lock is dropped automatically whenever the page stops being visible, so it has
+   * to be re-acquired on visibilitychange rather than taken once and trusted.
+   *
+   * Everything here degrades silently. On a browser without the API the game plays
+   * exactly as before and the player's screen timeout is their own; failing to get
+   * a lock is not worth an error message mid-run.
+   * ======================================================================== */
+  let wakeLockSentinel = null;
+  let wantWakeLock = false;
+
+  async function acquireWakeLock() {
+    if (!wantWakeLock || wakeLockSentinel) return;
+    if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+    try {
+      wakeLockSentinel = await navigator.wakeLock.request('screen');
+      wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; });
+    } catch (e) {
+      /* Denied, or the document lost visibility between the checks above and here.
+       * Either way there is nothing useful to say to a player mid-run. */
+      wakeLockSentinel = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    wantWakeLock = false;
+    if (!wakeLockSentinel) return;
+    const s = wakeLockSentinel;
+    wakeLockSentinel = null;
+    try { s.release(); } catch (e) { /* already gone */ }
+  }
+
+  function keepScreenAwake() {
+    wantWakeLock = true;
+    acquireWakeLock();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    // Re-take it on the way back; the browser dropped it on the way out.
+    if (document.visibilityState === 'visible') acquireWakeLock();
+  });
+
   async function beginRun(withCountdown) {
+    keepScreenAwake();
     sim.reset();
     audio.reset();
     // Start in the "not up to pace yet" band so the first cue the player hears
@@ -599,6 +651,7 @@ window.HP = window.HP || {};
   }
 
   function endRun(summary) {
+    releaseWakeLock();
     phase = 'over';
     audio.gameOver();
     util.hide(dom.hud);
@@ -635,6 +688,7 @@ window.HP = window.HP || {};
   }
 
   function toStartScreen() {
+    releaseWakeLock();
     phase = 'start';
     framingActive = false;
     util.hide(dom.hud);
@@ -727,6 +781,7 @@ window.HP = window.HP || {};
   }
 
   async function beginWallRun() {
+    keepScreenAwake();
     wallSim.reset();
     audio.reset();
     simPoseId = null;
@@ -1013,6 +1068,7 @@ window.HP = window.HP || {};
   }
 
   function endWallRun(summary) {
+    releaseWakeLock();
     phase = 'over';
     if (summary.reason === 'complete') audio.milestone(); else audio.gameOver();
     util.hide(dom.wallHud);
