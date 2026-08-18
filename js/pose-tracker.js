@@ -715,9 +715,28 @@ window.HP = window.HP || {};
         if (dt > 1e-3 && dt < 0.5) {
           // Screen y grows downward, so a NEGATIVE dy is upward movement.
           const velUp = -((hipMidY - this._prevHipY) / bodyScale) / dt;
-          // Light extra smoothing: the position is already One Euro filtered,
-          // but a derivative always amplifies whatever noise is left.
-          this._hipVel += (velUp - this._hipVel) * 0.5;
+          /* Light extra smoothing: the position is already One Euro filtered, but a
+           * derivative always amplifies whatever noise is left.
+           *
+           * FRAME-RATE INDEPENDENT, and it has to be. This was
+           * `this._hipVel += (velUp - this._hipVel) * 0.5`, a fixed alpha per
+           * SAMPLE, so the smoother's time constant scaled with the frame interval
+           * and the same physical jump produced a different number on every device.
+           * Measured on one real countermovement jump — hips rising 0.30 body-scale
+           * in 0.22s, true peak ~2.14 bs/s — against a threshold of 1.5:
+           *
+           *      6fps  0.91  missed        20fps  1.58  barely fires
+           *     12fps  1.29  missed        30fps  1.81  fires
+           *
+           * A 2x swing from frame rate alone, and a mid-range phone sat 5% above
+           * the threshold. Phones throttle when they get warm, which is precisely
+           * what happens during a workout, so jumps would have started failing
+           * partway into a session and looked like the player's technique.
+           *
+           * RATE is picked to reproduce the old behaviour at 30fps and then hold it
+           * there for every other rate: 1 - exp(-rate/30) = 0.5 gives 30*ln2. */
+          const HIP_VEL_RATE = 20.8;
+          this._hipVel = util.approach(this._hipVel, velUp, HIP_VEL_RATE, dt);
         }
       }
       this._prevHipY = hipMidY;
