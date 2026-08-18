@@ -1371,10 +1371,27 @@ window.HP = window.HP || {};
     const dt = 1 / 60;
     if (simInput.up) simInput.pace += 1.4 * dt;
     if (simInput.down) simInput.pace -= 1.8 * dt;
-    // Bleed back toward the comfortable pace when nothing is held, so standing
-    // on the keyboard is not the resting state.
+
+    /* --- releasing the key means STOPPING ---------------------------------
+     * This used to bleed back toward 1.0 — the player's comfortable pace — with
+     * the reasoning that "standing on the keyboard is not the resting state".
+     * That was the wrong target and it broke the thing the game is about. Running
+     * IS the throttle, so the resting state has to be STOPPED, not cruising.
+     * Measured before the fix: releasing the key left the character travelling
+     * 59m further while the player did nothing, and the gap to the void GREW from
+     * 53.9m to 75.6m — so the keyboard build let you outrun the void by doing
+     * nothing at all, which is the exact inverse of the mechanic. Anyone judging
+     * the game from ?sim=1 was being shown a lie.
+     *
+     * Decays toward zero on the SAME constants as the real cadence detector
+     * (js/pose-tracker.js), read from config rather than copied, so the two paths
+     * cannot drift: exp(-dt/tau) is util.approach at a rate of 1/tau, and cadence
+     * below stoppedThreshold is reported as a hard zero there too. Stopping now
+     * collapses pace in about half a second in both. */
     if (!simInput.up && !simInput.down) {
-      simInput.pace = util.approach(simInput.pace, 1.0, 0.6, dt);
+      const c = CONFIG.cadence;
+      simInput.pace = util.approach(simInput.pace, 0, 1 / c.decayTau, dt);
+      if (simInput.pace < c.stoppedThreshold) simInput.pace = 0;
     }
     simInput.pace = clamp(simInput.pace, 0, CONFIG.pace.maxRatio);
 
