@@ -1,0 +1,58 @@
+# Deadlift Exercise Definition
+name: deadlift
+display_name: "Deadlift"
+type: repetition
+
+target_muscles:
+  - Hamstrings
+  - Glutes
+  - Lower Back
+equipment: "Bodyweight or Barbell"
+difficulty: intermediate
+default_reps: 8
+default_sets: 3
+description: "Hip hinge movement for posterior chain"
+
+angles:
+  primary:
+    points: [left_shoulder, left_hip, left_knee]
+    description: "Kalça menteşe açısı"
+
+state_order:
+  - up
+  - hinge
+  - down
+
+states:
+  up:
+    condition: "angle > 165"
+    description: "Dik duruş"
+  
+  hinge:
+    condition: "angle > 100 and angle <= 165"
+    description: "Eğilme aşaması"
+  
+  down:
+    condition: "angle <= 100"
+    description: "Alt pozisyon"
+
+counter:
+  trigger_state: up
+  from_state: down
+
+min_rep_duration: 1.0
+
+feedback:
+  rounded_back:
+    condition: "angle < 90"
+    message: "Keep back flat - don't round"
+    severity: warning
+
+visualization:
+  lines:
+    - points: [left_shoulder, left_hip]
+      color: [139, 69, 19]
+      thickness: 4
+    - points: [left_hip, left_knee]
+      color: [139, 69, 19]
+      thickness: 4
