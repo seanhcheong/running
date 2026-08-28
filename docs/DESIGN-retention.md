@@ -208,3 +208,57 @@ limb lengths. Positions are an art asset as much as a matcher.
 
     positions -> gates: a shape to match, and to render
     angles    -> exercises: a movement to perform, and floor poses at all
+
+---
+
+## Follow-up: angles vs positions on the actual new-mode exercises
+
+Four exercises — stand / squat / lunge_left / lunge_right — built from joint angles
+by forward kinematics, with position targets derived from those same canonical
+bodies (exactly how a target table is authored today), so both representations get
+identical definitions and identical inputs. Score is worst-rule, matching
+poseErrorDetail. "Margin" is the gap to the nearest WRONG exercise: bigger is more
+headroom before a misread.
+
+    condition               positions            angles
+                            correct   margin     correct   margin
+    ideal                   100%      0.381      100%      0.756
+    limbs +15%              100%      0.275      100%      0.756
+    limbs -15%              100%      0.222      100%      0.756
+    phone tilted 10 deg     100%      0.174      100%      0.756
+    phone tilted 20 deg     100%      0.063      100%      0.756
+    tilt 15 + limbs +15%    100%      0.066      100%      0.756
+    keypoint noise 0.02     100%      0.256      100%      0.402
+    keypoint noise 0.05     100%      0.123      99.8%     0.004
+    noise 0.02 + tilt 15    100%      0.029      100%      0.363
+    noise 0.05 + tilt 15    98.0%     0.002      99.9%     0.002
+
+BOTH CLASSIFY ALL FOUR CORRECTLY in every clean condition. Neither breaks. So for
+these standing exercises the honest answer to "would angles be much better" is NO —
+it is a trade, not an upgrade:
+
+- Limb proportions and camera tilt: angles win, exactly and by construction. The
+  position margin collapses 0.381 -> 0.063 under 20 degrees of tilt, an 83% loss of
+  safety margin, while the angle margin never moves at all.
+- KEYPOINT NOISE: POSITIONS WIN. At sigma 0.05 the position worst-case margin is
+  0.123 against the angles' 0.004, and angles misread 0.2% of frames where
+  positions never do. This is not a fluke — an angle is a DERIVED quantity, an
+  arccos of differences of noisy positions, and arccos has unbounded derivative
+  near its limits. Angles amplify the noise they are computed from.
+
+Two caveats on that noise column. The invariance rows are close to tautological:
+uniform limb scaling and in-plane rotation are precisely the two things angles are
+invariant to, so confirming they hold proves the arithmetic, not the robustness. And
+the noise model is IID Gaussian per joint, which is NOT how MoveNet errs — its
+errors are structured and correlated, a whole limb going wrong together. Treat that
+row as indicative.
+
+The actionable consequence: the noise penalty is fixable. Positions are already One
+Euro filtered upstream; angles computed from them need their OWN smoothing, because
+the derivative reintroduces what the filter removed. Filter the angles and the 0.004
+margin problem largely goes away.
+
+So the case for angles narrows to one thing, and it is still decisive: floor poses,
+where positions sit at 6.9x tolerance and are inexpressible rather than merely
+worse. Adopt angles there. For the standing exercises, positions are already fine
+and cheaper — the reason to unify on angles would be consistency, not accuracy.
