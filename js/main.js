@@ -39,6 +39,16 @@ window.HP = window.HP || {};
   const clamp = util.clamp;
 
   const SIM_MODE = util.queryFlag('sim');
+
+  /* ?pose=mediapipe swaps the model for one session without editing config, so
+   * the two can be compared back to back on the same phone. Applied before
+   * anything reads cfg.pose.backend. */
+  (function () {
+    try {
+      const want = new URLSearchParams(window.location.search).get('pose');
+      if (want === 'mediapipe' || want === 'movenet') CONFIG.pose.backend = want;
+    } catch (e) { /* no URLSearchParams: keep the configured default */ }
+  })();
   const FORCE_CANVAS = util.queryFlag('canvas');
 
   function queryValue(name) {
@@ -547,6 +557,7 @@ window.HP = window.HP || {};
 
   async function beginRun(withCountdown) {
     keepScreenAwake();
+    simInputLastT = null;   // stale timestamp across runs would give a huge first dt
     sim.reset();
     audio.reset();
     // Start in the "not up to pace yet" band so the first cue the player hears
@@ -1367,8 +1378,31 @@ window.HP = window.HP || {};
    * feeds exactly the same `signals` object the pose tracker writes to, so
    * nothing downstream can tell the difference.
    * ======================================================================== */
+  let simInputLastT = null;
+
   function applySimInput() {
-    const dt = 1 / 60;
+    /* REAL elapsed time, not an assumed frame interval.
+     *
+     * This was `const dt = 1 / 60`, while the function is called from a
+     * requestAnimationFrame loop — so it silently assumed 60fps and every rate
+     * below became a lie on any device that renders slower. Measured at this
+     * sandbox's ~6fps, pace both ramped and decayed 10x too slowly in real time:
+     * three seconds after releasing the key, pace was still 0.53 and the
+     * character was doing 7.6 m/s, when the whole point of the earlier throttle
+     * fix was that letting go stops you in about half a second. At 30fps it is
+     * 2x too slow, at 20fps 3x. So the throttle's feel depended on frame rate.
+     *
+     * Same class of bug as the hip-velocity smoother in js/pose-tracker.js, and
+     * the third time frame-rate assumptions have bitten in this file's vicinity.
+     * Clamped the way GameSim clamps its own delta: a backgrounded tab returns
+     * one enormous interval, which would otherwise snap pace across its whole
+     * range in a single frame. */
+    const nowT = util.now();
+    const dt = simInputLastT === null
+      ? 1 / 60
+      : clamp(nowT - simInputLastT, 0, CONFIG.game.maxTimestep);
+    simInputLastT = nowT;
+    if (dt <= 0) return;
     if (simInput.up) simInput.pace += 1.4 * dt;
     if (simInput.down) simInput.pace -= 1.8 * dt;
 

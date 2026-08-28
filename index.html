@@ -265,11 +265,29 @@
 <script src="vendor/phaser.min.js"></script>
 
 <script src="js/config.js"></script>
+<!-- MediaPipe's bundle, loaded ONLY when selected: 152KB of JS that pulls a
+     ~12MB wasm runtime behind it, which nobody on the MoveNet path should pay
+     for. Written with document.write so it lands in order, before the app
+     scripts, without turning everything below into a module. -->
+<script>
+  (function () {
+    var want = null;
+    try { want = new URLSearchParams(location.search).get('pose'); } catch (e) {}
+    var cfg = window.HP && window.HP.CONFIG && window.HP.CONFIG.pose;
+    if (want === 'mediapipe' || (want !== 'movenet' && cfg && cfg.backend === 'mediapipe')) {
+      document.write('<script src="vendor/mediapipe/vision_bundle.js"><\/script>');
+    }
+  })();
+</script>
 <script src="js/palette.js"></script>
 <script src="js/util.js"></script>
 <script src="js/one-euro-filter.js"></script>
 <script src="js/poses.js"></script>
 <script src="js/avatar.js"></script>
+<!-- Alternative pose backend. Loads before pose-tracker.js, which looks for
+     HP.mediapipe when cfg.pose.backend is 'mediapipe'. Inert otherwise, and
+     vision_bundle.js is only fetched when actually selected — see below. -->
+<script src="js/pose-backend-mediapipe.js"></script>
 <script src="js/pose-tracker.js"></script>
 <script src="js/calibration.js"></script>
 <script src="js/audio.js"></script>

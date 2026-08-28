@@ -65,6 +65,27 @@ window.HP.CONFIG = {
    * POSE MODEL
    * ------------------------------------------------------------------------ */
   pose: {
+    /* --- which model reads the body -------------------------------------
+     * 'movenet'   MoveNet SinglePose Lightning via TF.js. The default, and the
+     *             only one that has ever been exercised end to end here.
+     * 'mediapipe' MediaPipe Tasks Vision PoseLandmarker. Adds heels and foot
+     *             indices, which MoveNet's COCO-17 does not have and which
+     *             lunges want, and it is the one of the two published as
+     *             validated for fitness at this camera distance (PCK@0.2
+     *             95.5-97.5 on Yoga/Dance/HIIT sets, subject 2-4m away).
+     *
+     * MoveNet stays the default deliberately. MediaPipe has never run against a
+     * camera in this project — only against synthetic landmarks — so calling it
+     * the better choice would be a guess. It also costs about 2.4x the first-load
+     * download (see tools/vendor-mediapipe.sh for the arithmetic). Override per
+     * session with ?pose=mediapipe and measure both on a real phone. */
+    backend: 'movenet',
+
+    // Where vendor-mediapipe.sh puts things. Both are gitignored, so a missing
+    // file here is the expected state until that script has been run.
+    mediapipeWasmPath: 'vendor/mediapipe/wasm',
+    mediapipeModelPath: 'vendor/models/pose_landmarker_lite.task',
+
     // MoveNet SinglePose Lightning — the fast variant, required for phones.
     modelType: 'SinglePose.Lightning',
 

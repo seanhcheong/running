@@ -302,6 +302,31 @@ window.HP = window.HP || {};
      * Init: TF.js backend (explicitly WebGL) + MoveNet
      * -------------------------------------------------------------------- */
     async init() {
+      /* --- MediaPipe path ---------------------------------------------------
+       * Returns early and deliberately: MediaPipe brings its own WASM runtime and
+       * its own GPU delegate, so none of the TF.js backend selection below
+       * applies. Everything AFTER init — cadence detection, One Euro filtering,
+       * gesture thresholds, calibration — is untouched, because the two backends
+       * meet at estimatePoses() and nowhere else. See js/pose-backend-mediapipe.js
+       * and cfg.pose.backend. */
+      if (this.cfg.pose.backend === 'mediapipe') {
+        if (!HP.mediapipe) {
+          throw new Error('MediaPipe backend selected but js/pose-backend-mediapipe.js ' +
+            'is not loaded.');
+        }
+        const tMp = util.now();
+        this.detector = await HP.mediapipe.createDetector(this.cfg);
+        this.backend = 'mediapipe';
+        if (this.cfg.debug.logBackend) {
+          console.log('%c[HP] MediaPipe PoseLandmarker loaded in ' +
+            ((util.now() - tMp) * 1000).toFixed(0) + 'ms',
+            'font-weight:bold;color:#12b886');
+        }
+        this.emit('backend', { backend: this.backend, ok: true });
+        this.emit('ready', { backend: this.backend });
+        return this.backend;
+      }
+
       if (typeof tf === 'undefined') {
         throw new Error('TensorFlow.js failed to load (vendor/tf-core.min.js).');
       }
@@ -1074,6 +1099,7 @@ window.HP = window.HP || {};
       this.stop();
       this.stopCamera();
       if (this.detector && this.detector.dispose) {
+        // Both backends expose dispose(); the MediaPipe adapter wraps close().
         try { this.detector.dispose(); } catch (e) { /* ignore */ }
       }
       this.detector = null;

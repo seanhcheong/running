@@ -3,7 +3,13 @@
 .vendor-build/
 
 # Optional locally-downloaded MoveNet weights (see README "Running fully offline")
+# and the MediaPipe pose model (see tools/vendor-mediapipe.sh)
 vendor/models/
+
+# MediaPipe's WASM runtime: ~23MB across the SIMD and nosimd builds, and fully
+# reproducible from tools/vendor-mediapipe.sh. vision_bundle.js next to it IS
+# committed — it is 152KB of Apache 2.0 code, same as the vendored TF.js files.
+vendor/mediapipe/wasm/
 
 node_modules/
 .DS_Store
