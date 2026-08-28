@@ -131,3 +131,80 @@ things gate it and both need a body, not more code:
 - **The floor-camera test.** Whether MoveNet reports usable keypoints for a prone
   body from a phone on the floor decides whether burpees and push-ups — two of the
   three panels in the original mockup — can exist at all. See docs/ART-BRIEF.md.
+
+---
+
+# Measured: would angle-based matching improve pose recognition?
+
+Asked while evaluating whether to adopt a MediaPipe-style declarative angle engine
+for a new game mode. Worth recording because the answer is narrower than it looks,
+and because the first version of my own reasoning was wrong.
+
+The shipped matcher is POSITION-target: each pose in js/poses.js is a table of
+(x,y) offsets per joint in torso-length units, hip-anchored, scored as worst-joint
+distance against a 0.22 tolerance. The alternative is joint ANGLES over triplets.
+Two axes decide it, and they give opposite answers.
+
+## Body proportions: angles buy headroom, not correctness
+
+Decomposing each shipped pose into joint angles plus segment lengths, then
+rebuilding the body with the same angles and different limb lengths — the identical
+pose performed by a differently proportioned person:
+
+    limb length     worst error   vs tolerance   poses unmatchable
+    -15%            0.159         0.72x          0 / 10
+    -10%            0.106         0.48x          0 / 10
+    reference       0             0x             0 / 10
+    +10%            0.106         0.48x          0 / 10
+    +15%            0.159         0.72x          0 / 10
+    legs +15% only  0.153         0.70x          0 / 10
+
+So the position matcher already absorbs realistic proportion variation — nothing
+breaks. But it spends 72% of the tolerance budget doing it, leaving a long- or
+short-limbed player 28% for actual sloppiness where a reference-proportioned player
+gets 100%. That is a real fairness asymmetry and a modest win for angles, not the
+correctness bug it first looked like. An earlier note here framed the torso-unit
+targets as though they baked in a proportion assumption that failed in practice.
+They bake it in; it does not fail.
+
+## Whole-body rotation: angles are the enabler, not an improvement
+
+stand_tall, rotated about the hips, with the elbow and hip angles an angle matcher
+would read alongside:
+
+    rotation   position error   vs tolerance   elbow angle   hip angle
+    0          0                0x             177.5         166.4
+    10         0.188            0.90x          177.5         166.4
+    30         0.558            2.5x           177.5         166.4
+    45         0.824            3.7x           177.5         166.4
+    90         1.523            6.9x           177.5         166.4
+
+The angles do not move at all — rotation invariance is exact, by construction.
+Two conclusions:
+
+- FLOOR POSES. At 90 degrees the position error is 6.9x tolerance. The current
+  representation cannot express a plank or a push-up at any tolerance worth having.
+  For those, angles are not an improvement, they are the only way in.
+- STANDING POSES TOO. Ten degrees already costs 0.90x of the whole budget. That is
+  a player leaning, or — far more common — a phone propped at a tilt against
+  whatever was to hand. This is a live robustness issue for the ten poses that
+  already ship, and a bigger one than proportions.
+
+## What angles do NOT fix
+
+2D angles are not projective invariants. A limb pointing toward the camera
+foreshortens and its measured 2D angle is wrong, for angles and positions alike. So
+this is not a general robustness upgrade: angles are invariant to scale, to limb
+length, and to IN-PLANE rotation, and to nothing else. Out-of-plane error needs
+either a 3D-lifting model or poses chosen to keep limbs in the frontal plane, which
+is what the current pose library already does implicitly.
+
+## Verdict
+
+Add angles; keep positions. They answer different questions and the game needs
+both — the wall gates DRAW their target from pose.target via drawPoseFigure, and a
+shape cannot be drawn from angles without solving inverse kinematics with unknown
+limb lengths. Positions are an art asset as much as a matcher.
+
+    positions -> gates: a shape to match, and to render
+    angles    -> exercises: a movement to perform, and floor poses at all
