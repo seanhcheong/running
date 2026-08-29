@@ -1331,7 +1331,16 @@ window.HP = window.HP || {};
       lines.push('kneeDiff ' + s.kneeDiff.toFixed(3) +
         '  band ' + cd.deadband.toFixed(3) +
         '  amp ' + cd.amplitude.toFixed(3));
-      lines.push('steps    ' + s.stepCount + '  consec ' + cd.consecutive);
+      lines.push('steps    ' + s.stepCount + '  consec ' + cd.consecutive +
+        '  gap<' + cd._flipTimeout().toFixed(2) + 's');
+      /* Camera roll, the first thing to check when poses feel unfair. Several
+       * degrees here means the phone is propped crooked; the tilt is being
+       * removed from every metric, but a very large reading means it is being
+       * clamped and something is still leaking through. */
+      const rollDeg = (s.cameraRoll || 0) * 180 / Math.PI;
+      lines.push('roll     ' + rollDeg.toFixed(1) + ' deg' +
+        (Math.abs(rollDeg) >= CONFIG.pose.rollMaxDeg - 0.5 ? ' CLAMPED!' : '') +
+        (CONFIG.pose.rollCorrect ? '' : ' (correction off)'));
       lines.push('lean     ' + s.centerOffset.toFixed(2) + ' → lane ' + s.laneIntent);
       lines.push('hipOff   ' + s.hipOffset.toFixed(2) + (s.ducking ? '  DUCK' : ''));
       lines.push('hipVel   ' + s.hipVelocity.toFixed(2) +

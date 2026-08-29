@@ -102,6 +102,38 @@ window.HP = window.HP || {};
     }
 
     /**
+     * How long without a sign flip before the pattern is abandoned.
+     *
+     * This was a CONSTANT 0.55s, and a constant cannot be right here: the gap
+     * between flips is 1/cadence, so a fixed timeout is a hidden floor on the
+     * cadence that can be detected at all. Measured by bisection against the
+     * shipped detector, that floor was 1.73 steps/sec — 104 steps/min — while
+     * cfg.minStepsPerSec advertises 1.0 and the comment beside it calls that "a
+     * slow march". Everything between 60 and 104 steps/min reported a hard zero
+     * while the player was running: the pattern died between every pair of
+     * steps, so `consecutive` never reached minConsistentSteps.
+     *
+     * That band is not an edge case, it is the onramp. An unfit or tired player
+     * jogging in place sits in it, and during calibration's warm-up they would
+     * be told "lift your knees a little more" — advice that cannot help, since
+     * the problem is tempo, not height.
+     *
+     * So scale it to the rhythm the player has actually established. This is
+     * also STRICTLER than before for a fast runner (0.32s at 5 steps/sec against
+     * 0.55s), so stopping is noticed sooner, not later.
+     */
+    _flipTimeout() {
+      const cfg = this.cfg;
+      /* Before a rhythm exists, allow the slowest cadence the config claims to
+       * support — otherwise the bootstrap timeout re-creates the same floor it
+       * is meant to remove, and `intervals` never reaches the 2 entries this
+       * needs to tighten. */
+      if (this.intervals.length < 2) return cfg.flipTimeoutBootstrap;
+      return clamp(util.median(this.intervals) * cfg.flipTimeoutRatio,
+                   cfg.flipTimeoutMin, cfg.flipTimeoutMax);
+    }
+
+    /**
      * @param {number} v  kneeDiff in body-scale units
      * @param {number} t  timestamp in seconds
      * @returns {{cadence:number, running:boolean, stepped:boolean}}
@@ -175,7 +207,8 @@ window.HP = window.HP || {};
 
       /* --- Smooth, or decay when the player stops -------------------------- */
       const sinceFlip = this.lastFlipTime === null ? Infinity : t - this.lastFlipTime;
-      if (patternOk && sinceFlip <= cfg.flipTimeout) {
+      const flipTimeout = this._flipTimeout();
+      if (patternOk && sinceFlip <= flipTimeout) {
         this.cadence += (this.rawCadence - this.cadence) * cfg.smoothing;
         this.running = true;
       } else {
@@ -186,14 +219,36 @@ window.HP = window.HP || {};
           ? 0
           : clamp(t - this.lastUpdateT, 0, 0.25);
         this.cadence *= Math.exp(-dt / cfg.decayTau);
-        if (sinceFlip > cfg.flipTimeout) {
+        if (sinceFlip > flipTimeout) {
           this.consecutive = 0;
           this.intervals.length = 0;
         }
         if (this.cadence < cfg.stoppedThreshold) {
           this.cadence = 0;
           this.running = false;
-          this.amplitude *= 0.9;
+          /* Time-based, and that is a fix rather than a tidy-up. This was
+           * `this.amplitude *= 0.9` — per FRAME, so 0.9^30 = 0.04 per second at
+           * 30 reads/sec — and it created a deadlock the player could not
+           * escape by trying harder:
+           *
+           *   not running -> amplitude decays 25x faster than steps replenish it
+           *               -> amplitude sits below minAmplitudeRatio * calibrated
+           *               -> patternOk false -> still not running.
+           *
+           * Solving the recurrence (amplitude is topped up once per half-cycle
+           * by a 0.3 blend, and decayed every frame in between) puts the fixed
+           * point at 0.38 x the true knee peak at 30fps, against a floor of
+           * 0.40. It failed by 5% — measured: a clean 2.6 steps/sec run with a
+           * symmetric knee signal reported cadence 0 and running false
+           * indefinitely, while the SAME run seen by a tilted phone reported
+           * 2.61 correctly, because the tilt inflated one side's peak enough to
+           * clear the floor. A bug that a crooked phone hid.
+           *
+           * At amplitudeDecayRate the fixed point is 0.49-0.67 x the peak across
+           * the whole 1.0-5.5 steps/sec range, and no longer moves with frame
+           * rate — which also means a phone that calibrates at 30fps and
+           * thermally throttles to 15 keeps the same gate. */
+          this.amplitude = util.approach(this.amplitude, 0, cfg.amplitudeDecayRate, dt);
         }
       }
 
@@ -258,6 +313,11 @@ window.HP = window.HP || {};
       this._prevHipT = null;
       this._hipVel = 0;         // body-scale units/sec, positive = moving UP
       this._prevMetricT = null; // for the centre drift correction's timestep
+      /* Filtered camera roll. Starts level, which is exactly the behaviour
+       * before roll correction existed, and converges on the truth in about a
+       * second — so the worst case is a second of the old behaviour, never a
+       * second of a wrong correction. */
+      this._cameraRoll = 0;
       this._lostSince = null;
       this._processedFrames = 0;
       this._fpsWindowStart = util.now();
@@ -288,6 +348,10 @@ window.HP = window.HP || {};
         hipOffset: 0,       // body-scale units, +ve = hips BELOW neutral
         hipVelocity: 0,     // body-scale units/sec, +ve = up
         kneeDiff: 0,
+        // Filtered camera roll, radians, +ve clockwise on screen. Read off the
+        // hip line and removed from every metric above. Exposed for the debug
+        // overlay: if this reads several degrees, the phone is propped crooked.
+        cameraRoll: 0,
         // Keypoints re-expressed in body-scale units from the hip midpoint.
         // Wall Mode's pose matcher reads this; the running mode ignores it.
         poseNorm: null,
@@ -663,9 +727,12 @@ window.HP = window.HP || {};
         ? Infinity
         : Math.max(0, t - this._prevMetricT);
 
-      const ls = map.left_shoulder, rs = map.right_shoulder;
-      const lh = map.left_hip, rh = map.right_hip;
-      const lk = map.left_knee, rk = map.right_knee;
+      /* Not const: once the camera roll is known these are re-read from the
+       * levelled map, so that every metric below measures the player rather
+       * than the angle the phone happens to be propped at. */
+      let ls = map.left_shoulder, rs = map.right_shoulder;
+      let lh = map.left_hip, rh = map.right_hip;
+      let lk = map.left_knee, rk = map.right_knee;
 
       /* --- Confidence bookkeeping ---------------------------------------- */
       const required = cfg.calibration.requiredKeypoints;
@@ -698,6 +765,53 @@ window.HP = window.HP || {};
         this.emit('found', { t });
       }
       s.tracked = true;
+
+      /* --- Camera roll: level the horizon BEFORE measuring anything --------
+       * A phone propped against a laptop, a shelf or a water bottle is tilted,
+       * and every metric below is defined against screen axes, so a tilt leaks
+       * into all of them at once. Two of those leaks were measured:
+       *
+       *   POSE GATES. 8 degrees of tilt alone fails 40% of the pose library at
+       *   the shipped tolerance; stacked with ordinary limb-proportion
+       *   variation and keypoint noise, 53%. See the note in js/poses.js.
+       *
+       *   CADENCE, which is worse, because cadence is the throttle. kneeDiff is
+       *   (rk.y - lk.y) and the sign test around it is symmetric about zero, so
+       *   a tilt adds a CONSTANT: (rk.x - lk.x) * sin(roll), about 0.056 body
+       *   scales at 8 degrees against a default deadband of 0.055. Measured, a
+       *   player with a modest knee lift at 12 degrees of tilt produces ZERO
+       *   detected steps while running perfectly — the signal never reaches the
+       *   far side of the deadband, so nothing alternates.
+       *
+       * The estimate is heavily filtered rather than used per frame, and that is
+       * not a refinement — raw, it is worse than leaving the tilt in (measured:
+       * 54% of poses failing at keypoint sigma 0.05, against 0.3% uncorrected).
+       * The hip line is a short lever, so a single frame's reading is noisy. It
+       * works only because roll is a property of a propped phone and therefore
+       * STATIC, which is what makes averaging legitimate here and illegitimate
+       * for the pose itself. */
+      let metricMap = map;
+      if (cfg.pose.rollCorrect && HP.poseLib) {
+        const maxRoll = (cfg.pose.rollMaxDeg || 25) * Math.PI / 180;
+        const rawRoll = HP.poseLib.hipRoll(map, cfg.pose.minKeypointScore, maxRoll);
+        if (rawRoll !== null) {
+          /* Starts at 0 — i.e. at today's behaviour — and converges on the real
+           * tilt within about a second, which is well inside calibration. A
+           * null reading holds the last value rather than pulling toward level;
+           * see hipRoll on why that distinction matters. */
+          this._cameraRoll = util.approach(
+            this._cameraRoll, rawRoll, cfg.pose.rollRate,
+            frameDt === Infinity ? 1 / 30 : Math.min(frameDt, 0.25));
+        }
+        if (this._cameraRoll) {
+          metricMap = HP.poseLib.rotateMap(
+            map, this._cameraRoll, (lh.x + rh.x) / 2, (lh.y + rh.y) / 2);
+          ls = metricMap.left_shoulder; rs = metricMap.right_shoulder;
+          lh = metricMap.left_hip; rh = metricMap.right_hip;
+          lk = metricMap.left_knee; rk = metricMap.right_knee;
+        }
+      }
+      s.cameraRoll = this._cameraRoll;
 
       /* --- Body scale: the distance-invariance trick ----------------------
        * Every threshold below is divided by this, so standing 6ft vs 10ft from
@@ -875,7 +989,7 @@ window.HP = window.HP || {};
       /* Normalised pose for Wall Mode's matcher. Hip-anchored and body-scale
        * divided, so it is translation- and scale-invariant — the same property
        * every threshold above relies on. Cheap: one pass over 17 keypoints. */
-      s.poseNorm = HP.poseLib ? HP.poseLib.normalise(map, bodyScale) : null;
+      s.poseNorm = HP.poseLib ? HP.poseLib.normalise(metricMap, bodyScale) : null;
 
       // Advance the frame clock last, so every consumer above saw the real
       // interval since the previous frame.

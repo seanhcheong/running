@@ -262,3 +262,125 @@ So the case for angles narrows to one thing, and it is still decisive: floor pos
 where positions sit at 6.9x tolerance and are inexpressible rather than merely
 worse. Adopt angles there. For the standing exercises, positions are already fine
 and cheaper — the reason to unify on angles would be consistency, not accuracy.
+
+---
+
+# Measured: why the recognition actually felt bad
+
+Prompted by the only piece of evidence in this document that came from a body
+rather than a script: "the current workout recognition is not very good". Every
+test above varied ONE thing at a time. That is not how a real player differs from
+the reference — they have their own limbs AND a crooked phone AND noisy keypoints,
+simultaneously, and worst-joint scoring means the worst of the three decides.
+
+Stacking them, against the shipped library at the shipped 0.22 tolerance:
+
+    condition                                 worst error   vs tol   poses failing
+    reference body, level phone, no noise     0             0x       0%
+    limbs +10% only                           0.106         0.48x    0%
+    phone tilt 8 deg only                     0.295         1.34x    40%
+    keypoint noise 0.02 only                  0.097         0.44x    0%
+    all three, mild                           0.378         1.72x    53.5%
+    all three, unlucky                        0.582         2.65x    95.8%
+
+No single perturbation broke anything. All three together broke half the library.
+And the pose library passes its own distinctness check (validateLibrary returns
+empty), so confusable poses were never the problem.
+
+**Tilt is the dominant term, by a wide margin.** Nobody props a phone level.
+
+## It was worse than the pose gates, because it also broke the throttle
+
+kneeDiff is `(rightKnee.y - leftKnee.y)` and the sign test around it is symmetric
+about zero, so a tilt does not add noise — it adds a CONSTANT:
+
+    kneeDiff' = (rk.x - lk.x) * sin(roll) + kneeDiff * cos(roll)
+
+The knees sit 0.40 body scales apart, so 8 degrees of tilt is a 0.056 offset
+against a default deadband of 0.055. Measured against the real detector, a player
+with a modest knee lift at 12 degrees of tilt produced **zero detected steps while
+running perfectly**: the signal never reached the far side of the deadband, so
+nothing alternated, so there was no pattern to find.
+
+## The fix: read the camera's roll off the hip line
+
+Every target in js/poses.js puts left_hip and right_hip at the same y — a squat, a
+knee raise, a star, a clap and a side bend all leave the pelvis level, because the
+pelvis is what the body moves around. So the observed hip-line angle IS the
+camera's roll, and nothing in the library perturbs it.
+
+Rejected alternative: the torso axis, which is 1.0 body scales long against the hip
+line's 0.36 and therefore 2.7x quieter. It moves. side_bend_left/right lean the
+torso +/-20 degrees on purpose, and a horizon that cannot tell a leaning player
+from a leaning phone would stop scoring the lean — turning a side bend into
+"stand there with one arm up". The hip line trades lever length for not lying.
+
+Also rejected: adopting angle-based matching for this, which was the previous
+recommendation. Angles are tilt-invariant by construction, but they are invariant
+by DISCARDING the information, so they inherit the same side-bend problem, and they
+amplify keypoint noise (see the section above). Measuring the tilt and removing it
+keeps the information and fixes the cause.
+
+**The correction only works filtered, and that is not a detail.** With that short
+lever the per-frame estimate is noisy enough that applying it raw is worse than
+leaving the tilt in — measured, 54% of poses failing at keypoint sigma 0.05 against
+0.3% uncorrected. It works because roll is a property of a propped phone and
+therefore static, so it can be averaged over time in a way a pose never can.
+
+    condition                        correction OFF        correction ON
+                                     worst   fail%         worst   fail%
+    reference, level, no noise        0       0%            0       0%
+    limbs +10% only                   0.106   0%            0.106   0%
+    phone tilt 8 deg only             0.295   40%           0       0%
+    phone tilt 15 deg only            0.552   100%          0       0%
+    keypoint noise 0.02 only          0.118   0%            0.119   0%
+    keypoint noise 0.05 only          0.273   1%            0.264   1.9%
+    all three, mild                   0.411   54.6%         0.19    0%
+    all three, unlucky                0.603   97.3%         0.311   9.9%
+
+The one place it is slightly worse is pure keypoint noise with no tilt at all —
+1.9% against 1%, the residual of estimating a horizon from a short line. That is
+the trade, and it is a good one: no real phone is at 0 degrees.
+
+Verified separately that the side bends still cannot be passed with an upright
+torso: the cheat scores 0.377 against a 0.22 tolerance, unchanged, because the hip
+line reads 0 degrees for it.
+
+## Two unrelated bugs found in the same detector while measuring this
+
+Both were found because the tilt tests kept producing results that were backwards,
+which is a good reason to chase an anomaly instead of explaining it away.
+
+**1. The amplitude gate deadlocked, and a crooked phone was hiding it.**
+`this.amplitude *= 0.9` ran per FRAME — 0.9^30 = 0.04 per second at 30 reads/sec —
+while steps replenished it once per half-cycle. Solving the recurrence puts the
+fixed point at 0.38x the true knee peak, against a `minAmplitudeRatio` floor of
+0.40. It failed by 5%. A clean 2.6 steps/sec run with a symmetric knee signal
+reported cadence 0 and running false indefinitely, while the SAME run seen by a
+tilted phone reported 2.61 correctly — the tilt inflated one side's peak just
+enough to clear the floor. Now time-based, fixed point 0.49-0.67x across the range
+and no longer moving with frame rate.
+
+**2. minStepsPerSec was off by 73%.** `flipTimeout` was a constant 0.55s, but flips
+arrive 1/cadence apart, so a fixed window is a hidden floor on detectable cadence.
+Measured by bisection: the real floor was **1.73 steps/sec (104 steps/min)** against
+the 1.0 (60/min) the config advertises and calls "a slow march". Everything in
+between reported a hard zero while the player ran — and during calibration's warm-up
+they were told to lift their knees higher, advice that cannot help, because the
+problem was tempo. The timeout now scales with the rhythm the player has
+established; the measured floor is 0.99 steps/sec at 15, 30 and 60 reads/sec, and
+stop detection got *faster* for quick runners (0.32s at 5 steps/sec, against 0.55).
+
+Checked that the guards this timeout was also serving survived: idle sway plus a
+single leg lift plus a two-step shuffle still produce zero running frames over 25
+seconds, one skipped stride mid-run still does not drop the player out of running,
+and a player who stops is reported stopped in 1.1-1.3s.
+
+## Still unmeasurable here
+
+All of the above is synthetic. The tilt model is a rigid rotation of the whole body
+in image space, which is what a rolled camera does, but the keypoint noise model is
+IID Gaussian and MoveNet's errors are structured and correlated. And the 8-degree
+figure is a plausible guess at how crooked a propped phone is, not a measurement.
+`?debug=1` now prints the filtered roll in degrees, so the real number is one
+session away.

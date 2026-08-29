@@ -107,6 +107,39 @@ window.HP.CONFIG = {
     minKeypointScore: 0.3,       // a keypoint is "usable" above this
     goodKeypointScore: 0.45,     // a keypoint is "solid" above this (calibration)
 
+    /* --- camera roll correction -------------------------------------------
+     * Nobody props a phone perfectly level, and screen-axis metrics do not
+     * survive that. Measured against the shipped pose library at the shipped
+     * tolerance, worst-joint scored:
+     *
+     *     tilt 8 deg alone                              40% of poses fail
+     *     tilt 8 + limbs 10% off + keypoint noise 0.02   53% of poses fail
+     *     the same two rows with correction on            0% and 0%
+     *
+     * And cadence, which matters more, because it is the throttle: kneeDiff's
+     * sign test is symmetric about zero, so a tilt shifts the whole signal off
+     * centre. At 12 degrees a player with a modest knee lift produced ZERO
+     * detected steps while running perfectly.
+     *
+     * Turn this off to get the old behaviour back for a comparison. */
+    rollCorrect: true,
+
+    /* Convergence rate of the roll estimate, per second. This is deliberately
+     * SLOW and that is the whole reason the correction works: the hip line is
+     * only ~0.36 body scales long, so one frame's angle is noisy, and applying
+     * it unfiltered is worse than leaving the tilt alone (measured: 54% of poses
+     * failing at keypoint sigma 0.05, against 0.3% with no correction at all).
+     *
+     * Roll is a property of a propped phone, so it is static, so averaging it is
+     * free. 1.6/sec matches averaging ~30 frames at 30 reads/sec, which brings
+     * the sigma-0.05 failure rate to 1.4%. Raising it re-admits the noise. */
+    rollRate: 1.6,
+
+    /* Refuse to "correct" more than a phone leaning against something plausibly
+     * is. Past this the reading is a turned player or a bad frame, not a tilt,
+     * and rotating the body by it would invent an error rather than remove one. */
+    rollMaxDeg: 25,
+
     // Process every Nth camera frame. 1 = every frame (~60fps, hot phone),
     // 2 = every other frame (~30 pose reads/sec) which is plenty for cadence
     // detection and roughly halves GPU load.
@@ -202,12 +235,51 @@ window.HP.CONFIG = {
     // decays into a tiny shuffle.
     minAmplitudeRatio: 0.4,
 
+    // How fast the tracked knee amplitude is forgotten once the player has
+    // stopped, per second. Amplitude is topped up once per step and decayed
+    // continuously in between, so this rate sets the FIXED POINT of that
+    // tug-of-war — and the fixed point has to stay above minAmplitudeRatio or a
+    // running player can never satisfy the amplitude gate at all. It used to be
+    // a per-frame 0.9, which put the fixed point at 0.38 against a 0.40 floor
+    // and deadlocked; see the note at the decay itself.
+    //
+    // 0.6/sec keeps it at 0.49-0.67 x the true knee peak across the whole
+    // 1.0-5.5 steps/sec range. Raising this toward 1.0 narrows that margin to
+    // nothing at the slow end. Nothing is lost by it being slow: once the
+    // player stops, the flip timeout zeroes the consecutive-step count, which
+    // ends `running` regardless of amplitude.
+    amplitudeDecayRate: 0.6,
+
     // Exponential smoothing on the reported cadence (0-1, per processed frame).
     // Lower = steadier number, slower to react to a genuine surge.
     smoothing: 0.25,
 
-    // No flip for this long => the player has stopped; begin decaying cadence.
-    flipTimeout: 0.55,
+    /* --- when to decide the player has stopped ----------------------------
+     * No sign flip for this long and the step pattern is abandoned. This USED
+     * to be a single constant 0.55s, which was a hidden floor on detectable
+     * cadence: flips arrive 1/cadence apart, so a fixed 0.55s window silently
+     * required 1.82 steps/sec. Measured by bisection against the real detector,
+     * the floor was 1.73 steps/sec — 104 steps/min — against the 1.0 (60/min)
+     * that minStepsPerSec above advertises. Every player jogging in place
+     * between 60 and 104 steps/min got a hard zero while running, and during
+     * calibration got told to lift their knees higher, which cannot help
+     * because the problem was tempo.
+     *
+     * So it scales with the rhythm the player has established.
+     *
+     * Bootstrap value, used until two intervals exist. Must exceed
+     * 1/minStepsPerSec (= 1.0s) or it re-creates the floor it exists to remove,
+     * since the pattern would die before enough intervals accumulated to
+     * measure a rhythm at all. */
+    flipTimeoutBootstrap: 1.2,
+    // Multiple of the player's own median half-cycle. 1.6 tolerates one sloppy
+    // stride; below ~1.2 an ordinary stumble reads as stopping.
+    flipTimeoutRatio: 1.6,
+    // Floor and ceiling on that. The floor keeps a sprinter's window from
+    // shrinking to a couple of frames; the ceiling stops a very slow runner
+    // from holding a stale cadence for over a second after they stop.
+    flipTimeoutMin: 0.28,
+    flipTimeoutMax: 1.25,
     // Time constant of that decay, in seconds. Cadence falls ~63% per tau.
     decayTau: 0.35,
     // Cadence below this is reported as a hard zero and running := false.

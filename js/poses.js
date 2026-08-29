@@ -299,6 +299,106 @@ window.HP = window.HP || {};
     return out;
   }
 
+  /* ===========================================================================
+   * Camera roll: the hip line is this library's built-in horizon
+   * ---------------------------------------------------------------------------
+   * Every target above puts left_hip and right_hip at the SAME y. That is not
+   * luck and not a convention worth breaking: a squat, a knee raise, a star, a
+   * clap and a side bend all leave the pelvis level, because the pelvis is what
+   * the rest of the body moves around. So the angle of the OBSERVED hip line is
+   * the camera's roll and nothing else — no arm, knee or torso movement in this
+   * library perturbs it.
+   *
+   * That is worth having because tilt turned out to be the largest error term in
+   * the whole matcher. Measured against the shipped library at the shipped 0.22
+   * tolerance, worst-joint scored:
+   *
+   *     phone tilted 8 degrees, nothing else wrong    40% of poses fail
+   *     8 degrees + limbs 10% off + keypoint noise    53% of poses fail
+   *
+   * A phone propped against whatever was to hand is tilted. Levelling it here
+   * takes both of those to 0%.
+   *
+   * WHY NOT THE TORSO AXIS, which is 1.0 body scales long against the hip
+   * line's 0.36 and therefore 2.7x quieter as an angle estimate: it MOVES.
+   * side_bend_left/right lean the torso +/-20 degrees on purpose, and a horizon
+   * that cannot tell a leaning player from a leaning phone would quietly stop
+   * scoring the lean — turning a side bend into "stand there with one arm up".
+   * The hip line trades lever length for not lying.
+   *
+   * THE COST IS REAL AND MUST BE PAID BY THE CALLER. With that short lever the
+   * per-frame estimate is noisy enough that using it raw makes matching WORSE
+   * than leaving the tilt in: measured 54% of poses failing at keypoint sigma
+   * 0.05 against 0.3% uncorrected. It only works because roll is STATIC — a
+   * propped phone does not move — so it can be averaged over time in a way a
+   * pose never can. This function deliberately returns the RAW reading; the
+   * temporal filter belongs to whoever owns per-frame state, which is
+   * pose-tracker.js.
+   * ======================================================================== */
+
+  /**
+   * Angle of the hip line, radians, positive clockwise in screen space. Zero
+   * means level.
+   *
+   * @returns {number|null} null when there is no trustworthy reading — missing
+   *   hips, a degenerate hip line, or an angle too large to be a propped phone.
+   *   Null must be held as "unknown", NOT collapsed to zero: treating "I cannot
+   *   see the hips" as "the camera is level" would undo the correction for
+   *   exactly the frames where the body is hardest to read.
+   */
+  function hipRoll(keypointMap, minKeypointScore, maxRoll) {
+    if (!keypointMap) return null;
+    const lh = keypointMap.left_hip;
+    const rh = keypointMap.right_hip;
+    const minScore = minKeypointScore === undefined ? 0.3 : minKeypointScore;
+    if (!lh || !rh || lh.score < minScore || rh.score < minScore) return null;
+    const dx = rh.x - lh.x;
+    const dy = rh.y - lh.y;
+    /* A hip line this short means the player is side-on or the read is bad. The
+     * angle of a 2px line is meaningless, and dividing tilt into it amplifies
+     * whatever noise produced it.
+     *
+     * Written as "must be at least 8" rather than "must not be under 8" so a NaN
+     * coordinate falls out here. That is not defensive padding: the caller feeds
+     * this into a persistent filter, so a single NaN would latch and every
+     * metric in the tracker would read NaN for the rest of the session. One
+     * skipped frame is the correct price. */
+    if (!(Math.hypot(dx, dy) >= 8)) return null;
+    const a = Math.atan2(dy, dx);
+    /* Beyond a quarter turn the hips have swapped sides — the player has turned
+     * around, or the mirror flipped. Not a roll reading. */
+    if (Math.abs(a) > Math.PI / 4) return null;
+    const cap = maxRoll === undefined ? Math.PI / 4 : maxRoll;
+    return Math.max(-cap, Math.min(cap, a));
+  }
+
+  /**
+   * Rotate a keypoint map by -roll about (ox, oy), levelling the horizon.
+   *
+   * Rotating about the HIP MIDPOINT rather than the frame centre is load
+   * bearing: baseline.centerX and baseline.standingHipY are calibrated in raw
+   * pixels, and spinning the body about the frame centre would translate it
+   * away from both. About the hips, the anchor does not move at all.
+   */
+  function rotateMap(keypointMap, roll, ox, oy) {
+    if (!keypointMap || !roll) return keypointMap;
+    const c = Math.cos(-roll);
+    const s = Math.sin(-roll);
+    const out = Object.create(null);
+    const names = Object.keys(keypointMap);
+    for (let i = 0; i < names.length; i++) {
+      const kp = keypointMap[names[i]];
+      const x = kp.x - ox;
+      const y = kp.y - oy;
+      out[names[i]] = {
+        x: ox + x * c - y * s,
+        y: oy + x * s + y * c,
+        score: kp.score,
+      };
+    }
+    return out;
+  }
+
   /**
    * Worst-joint distance between a normalised live pose and a target, in
    * body-scale units. Lower is better; 0 is a perfect match.
@@ -415,6 +515,8 @@ window.HP = window.HP || {};
   HP.POSE_BONES = POSE_BONES;
   HP.poseLib = {
     normalise: normalise,
+    hipRoll: hipRoll,
+    rotateMap: rotateMap,
     poseError: poseError,
     poseErrorDetail: poseErrorDetail,
     targetDistance: targetDistance,
